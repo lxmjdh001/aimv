@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI 广告素材生成</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section class="panel">
+        <p class="eyebrow">AI Creative API</p>
+        <h1>广告素材生成</h1>
+        <p class="hint">选择模型并填写提示词。API Key 和默认参数在后台配置。</p>
+
+        <label>模型</label>
+        <select id="modelType">
+          <option value="openaiTextToImage">GPT Image 2 文案生图</option>
+          <option value="textToVideo">HappyHorse 文生视频</option>
+          <option value="imageToVideo">HappyHorse 图生视频</option>
+        </select>
+
+        <a class="backLink" href="/admin773441?admin=7c">进入后台配置 API Key</a>
+
+        <label>提示词</label>
+        <textarea id="prompt" rows="6" placeholder="描述你想生成的广告图或视频">写实摄影风格，一名30岁左右的亚洲工厂工人在现代化车间内工作，穿着蓝色工服、安全帽和防护手套，正在检查一台精密工业设备，背景有整洁的生产线、金属机械、柔和工业灯光，商业广告质感，竖屏9:16，无文字，无logo</textarea>
+
+        <div id="imageBlock" class="hidden">
+          <label>首帧图片 URL</label>
+          <input id="imageUrl" placeholder="https://example.com/first-frame.png" />
+          <p class="tip">图片需公网可访问，支持 JPEG/JPG/PNG/WEBP，大小不超过 10MB。</p>
+        </div>
+
+        <div id="imageOptions">
+          <div class="row">
+            <div>
+              <label>图片尺寸</label>
+              <select id="imageSize">
+                <option value="1024x1536" selected>1024x1536 竖图</option>
+                <option value="1536x1024">1536x1024 横图</option>
+                <option value="1024x1024">1024x1024 方图</option>
+                <option value="auto">自动</option>
+              </select>
+            </div>
+            <div>
+              <label>图片质量</label>
+              <select id="imageQuality">
+                <option value="high" selected>high</option>
+                <option value="medium">medium</option>
+                <option value="low">low</option>
+                <option value="auto">auto</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div id="videoOptions" class="hidden">
+          <div class="row">
+            <div>
+              <label>清晰度</label>
+              <select id="resolution">
+                <option value="720P" selected>720P</option>
+                <option value="1080P">1080P</option>
+              </select>
+            </div>
+            <div id="ratioBlock">
+              <label>比例</label>
+              <select id="ratio">
+                <option value="9:16" selected>9:16 TikTok</option>
+                <option value="16:9">16:9</option>
+                <option value="1:1">1:1</option>
+                <option value="4:3">4:3</option>
+                <option value="3:4">3:4</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="row">
+            <div>
+              <label>时长</label>
+              <input id="duration" type="number" min="3" max="15" value="5" />
+            </div>
+            <div>
+              <label>Seed 可选</label>
+              <input id="seed" type="number" min="0" max="2147483647" placeholder="留空随机" />
+            </div>
+          </div>
+
+          <label class="checkbox">
+            <input id="watermark" type="checkbox" />
+            <span>添加 Happy Horse 水印</span>
+          </label>
+        </div>
+
+        <button id="submit">创建任务</button>
+      </section>
+
+      <section class="panel result">
+        <div class="resultHeader">
+          <div>
+            <p class="eyebrow">Task Result</p>
+            <h2>任务状态</h2>
+          </div>
+          <button id="refreshJob" class="secondary">刷新结果</button>
+        </div>
+
+        <label>本地 Job ID</label>
+        <input id="jobId" placeholder="创建任务后自动填入" />
+
+        <div id="statusBadge" class="badge">未提交</div>
+        <a id="assetLink" class="videoLink hidden" href="#" target="_blank" rel="noreferrer">打开生成结果</a>
+        <img id="imagePreview" class="preview hidden" alt="生成图片预览" />
+        <pre id="output">等待创建任务。</pre>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

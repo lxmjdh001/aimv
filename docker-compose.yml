@@ -1,0 +1,12 @@
+services:
+  ai-mv-admin:
+    image: node:24-alpine
+    working_dir: /app
+    command: node server/index.js
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./:/app
+    environment:
+      PORT: 3000
+    restart: unless-stopped

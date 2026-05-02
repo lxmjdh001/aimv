@@ -1,0 +1,8 @@
+{
+  "note": {
+    "class_type": "PreviewText",
+    "inputs": {
+      "text": "Replace this placeholder with a real Wan2.2 I2V or LTX-Video ComfyUI API workflow. Keep {{PROMPT}}, {{IMAGE_PATH}}, {{WIDTH}}, {{HEIGHT}}, {{FRAMES}}, {{FPS}}, {{SEED}} placeholders where needed."
+    }
+  }
+}
