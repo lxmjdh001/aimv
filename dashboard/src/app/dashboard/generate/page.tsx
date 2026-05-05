@@ -2,10 +2,10 @@
 
 import PageContainer from '@/components/layout/page-container';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { apiRequest } from '@/lib/api-client';
 import { useSearchParams } from 'next/navigation';
@@ -114,6 +114,7 @@ export default function GeneratePage() {
   const [imageUrl, setImageUrl] = useState('');
   const [imagePreviewUrl, setImagePreviewUrl] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [assetDialogOpen, setAssetDialogOpen] = useState(false);
   const [imageAssets, setImageAssets] = useState<ImageAsset[]>([]);
   const [assetsLoading, setAssetsLoading] = useState(false);
   const [ratio, setRatio] = useState('9:16');
@@ -172,6 +173,7 @@ export default function GeneratePage() {
       setJob({ id: '-', status: 'failed', error: error instanceof Error ? error.message : '选择素材失败' });
     } finally {
       setUploading(false);
+      setAssetDialogOpen(false);
     }
   }
 
@@ -418,26 +420,20 @@ export default function GeneratePage() {
 
                       <div className='space-y-2'>
                         <Label>首帧图片（可选）</Label>
-                        <Tabs defaultValue='upload'>
-                          <TabsList className='grid w-full grid-cols-2'>
-                            <TabsTrigger value='upload'>上传</TabsTrigger>
-                            <TabsTrigger value='assets'>素材库</TabsTrigger>
-                          </TabsList>
-                          <TabsContent value='upload' className='space-y-2'>
-                            <Input type='file' accept='image/png,image/jpeg,image/webp,image/bmp' onChange={(event) => handleUpload(event.target.files?.[0])} disabled={uploading} />
-                          </TabsContent>
-                          <TabsContent value='assets' className='space-y-2'>
-                            <Button type='button' variant='outline' size='sm' className='w-full' onClick={loadImageAssets} disabled={assetsLoading}>{assetsLoading ? '刷新中...' : '刷新素材'}</Button>
-                            <div className='grid max-h-40 grid-cols-3 gap-2 overflow-y-auto'>
-                              {imageAssets.map((asset) => (
-                                <button type='button' key={asset.id} onClick={() => chooseAsset(asset)} className={`relative overflow-hidden rounded-md border ${imagePreviewUrl === asset.url || imageUrl === asset.url ? 'border-primary ring-2 ring-primary/30' : 'border-border'}`}>
-                                  {(imagePreviewUrl === asset.url || imageUrl === asset.url) && <span className='absolute right-1 top-1 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground'>✓</span>}
-                                  <img src={asset.url} alt='素材图片' className='aspect-square w-full object-cover' />
-                                </button>
-                              ))}
-                            </div>
-                          </TabsContent>
-                        </Tabs>
+                        <Input type='file' accept='image/png,image/jpeg,image/webp,image/bmp' onChange={(event) => handleUpload(event.target.files?.[0])} disabled={uploading} />
+                        <Button
+                          type='button'
+                          variant='outline'
+                          size='sm'
+                          className='w-full'
+                          onClick={() => {
+                            setAssetDialogOpen(true);
+                            loadImageAssets();
+                          }}
+                          disabled={assetsLoading}
+                        >
+                          {assetsLoading ? '素材加载中...' : '从素材库选择'}
+                        </Button>
                         {imagePreviewUrl && (
                           <div className='flex items-center justify-between rounded-md border bg-background px-2 py-1 text-xs'>
                             <span>已选首帧</span>
@@ -453,6 +449,37 @@ export default function GeneratePage() {
           </section>
         </main>
       </div>
+      <Dialog open={assetDialogOpen} onOpenChange={setAssetDialogOpen}>
+        <DialogContent className='max-w-4xl'>
+          <DialogHeader>
+            <DialogTitle>选择素材库图片</DialogTitle>
+            <DialogDescription>选择一张图片作为视频首帧。</DialogDescription>
+          </DialogHeader>
+          <div className='flex items-center justify-between gap-3'>
+            <div className='text-muted-foreground text-sm'>{imageAssets.length ? `共 ${imageAssets.length} 张可选图片` : '暂无可选图片'}</div>
+            <Button type='button' variant='outline' size='sm' onClick={loadImageAssets} disabled={assetsLoading}>{assetsLoading ? '刷新中...' : '刷新素材'}</Button>
+          </div>
+          <div className='grid max-h-[60vh] gap-3 overflow-y-auto pr-1 sm:grid-cols-3 md:grid-cols-4'>
+            {imageAssets.map((asset) => (
+              <button
+                type='button'
+                key={asset.id}
+                onClick={() => chooseAsset(asset)}
+                className={`relative overflow-hidden rounded-xl border bg-background text-left transition hover:border-primary ${imagePreviewUrl === asset.url || imageUrl === asset.url ? 'border-primary ring-2 ring-primary/30' : 'border-border'}`}
+              >
+                {(imagePreviewUrl === asset.url || imageUrl === asset.url) && <span className='absolute right-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground'>✓</span>}
+                <img src={asset.url} alt='素材图片' className='aspect-square w-full bg-muted object-cover' />
+                <div className='text-muted-foreground p-2 text-xs'>{truncate(asset.prompt) || '素材图片'}</div>
+              </button>
+            ))}
+            {!imageAssets.length && (
+              <div className='text-muted-foreground rounded-xl border border-dashed p-10 text-center text-sm sm:col-span-3 md:col-span-4'>
+                {assetsLoading ? '素材加载中...' : '暂无可选图片素材'}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </PageContainer>
   );
 }
