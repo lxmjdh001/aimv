@@ -2,46 +2,65 @@
 
 import PageContainer from '@/components/layout/page-container';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { apiRequest } from '@/lib/api-client';
+import { useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 type GenerationType = 'image' | 'video';
 type Job = { id: string; status: string; taskType?: string; workflowType?: string; prompt?: string; outputs?: { image_url?: string; video_url?: string; images?: string[] }; error?: string; remoteJob?: any; createdAt?: string };
 type UploadResponse = { url: string; publicUrl: string };
 type ImageAsset = { id: string; url: string; prompt: string; createdAt?: string };
+type AiModel = {
+  id: string;
+  displayName: string;
+  providerId: string;
+  providerName?: string;
+  modelName: string;
+  modality: string;
+  capability: string;
+  enabled: boolean;
+  customerEnabled: boolean;
+  sortOrder: number;
+};
 
 const defaultPrompt = '写实摄影风格，一名30岁左右的长发女性南非工人在工作间内工作，穿着家用蓝色带花短袖、防护手套，正在检查一串串手串是否制作完整,手串有五颜六色的透明珠子，她的工作就是制作精美手串，背景有家用墙壁闹钟、光线是中午的阳光，商业广告质感。';
 
 const ratioOptions = [
-  { value: '1:1', label: '1:1 正方形 / 头像 / 商品主图', wanxSize: '2048*2048', openaiSize: '1024x1024', videoRatio: '1:1' },
-  { value: '4:5', label: '4:5 信息流 / Instagram / 小红书', wanxSize: '1638*2048', openaiSize: '1024x1280', videoRatio: '3:4' },
-  { value: '3:4', label: '3:4 竖版海报 / 电商', wanxSize: '1536*2048', openaiSize: '1024x1365', videoRatio: '3:4' },
-  { value: '2:3', label: '2:3 海报 / Pinterest', wanxSize: '1365*2048', openaiSize: '1024x1536', videoRatio: '9:16' },
-  { value: '9:16', label: '9:16 TikTok / Reels / Shorts', wanxSize: '1152*2048', openaiSize: '1024x1792', videoRatio: '9:16' },
-  { value: '16:9', label: '16:9 YouTube / 横版广告', wanxSize: '2048*1152', openaiSize: '1792x1024', videoRatio: '16:9' },
-  { value: '3:2', label: '3:2 摄影横图 / Banner', wanxSize: '2048*1365', openaiSize: '1536x1024', videoRatio: '16:9' },
-  { value: '4:3', label: '4:3 传统横图 / 展示图', wanxSize: '2048*1536', openaiSize: '1365x1024', videoRatio: '4:3' },
-  { value: '5:4', label: '5:4 商品图 / 平面设计', wanxSize: '2048*1638', openaiSize: '1280x1024', videoRatio: '4:3' }
+  { value: '1:1', label: '1:1 正方形', wanxSize: '2048*2048', openaiSize: '1024x1024', videoRatio: '1:1' },
+  { value: '4:5', label: '4:5 信息流', wanxSize: '1638*2048', openaiSize: '1024x1280', videoRatio: '3:4' },
+  { value: '3:4', label: '3:4 竖版海报', wanxSize: '1536*2048', openaiSize: '1024x1365', videoRatio: '3:4' },
+  { value: '2:3', label: '2:3 海报', wanxSize: '1365*2048', openaiSize: '1024x1536', videoRatio: '9:16' },
+  { value: '9:16', label: '9:16 短视频', wanxSize: '1152*2048', openaiSize: '1024x1792', videoRatio: '9:16' },
+  { value: '16:9', label: '16:9 横版广告', wanxSize: '2048*1152', openaiSize: '1792x1024', videoRatio: '16:9' },
+  { value: '3:2', label: '3:2 摄影横图', wanxSize: '2048*1365', openaiSize: '1536x1024', videoRatio: '16:9' },
+  { value: '4:3', label: '4:3 展示图', wanxSize: '2048*1536', openaiSize: '1365x1024', videoRatio: '4:3' },
+  { value: '5:4', label: '5:4 商品图', wanxSize: '2048*1638', openaiSize: '1280x1024', videoRatio: '4:3' }
 ];
 
 const videoDurationOptions = [
-  { value: '5', label: '5 秒（默认，速度快）' },
-  { value: '10', label: '10 秒（更完整，成本更高）' }
+  { value: '5', label: '5 秒' },
+  { value: '10', label: '10 秒' }
 ];
 
 const progressSteps = [
-  { min: 0, label: '开始提交任务', description: '正在把提示词和比例参数发送到模型服务。' },
+  { min: 0, label: '开始提交任务', description: '正在把提示词和参数发送到模型服务。' },
   { min: 18, label: '排队等待', description: '模型服务已收到请求，正在等待计算资源。' },
   { min: 42, label: '生成中', description: 'AI 正在生成素材，请不要重复提交。' },
   { min: 72, label: '即将完成', description: '结果正在整理和保存，马上就好。' },
   { min: 92, label: '马上完成', description: '正在同步最终结果。' }
 ];
+
+const capabilityLabel: Record<string, string> = {
+  text_to_image: '文生图',
+  image_to_image: '图像编辑',
+  text_to_video: '文生视频',
+  image_to_video: '图生视频'
+};
 
 function getRatioOption(value: string) {
   return ratioOptions.find((item) => item.value === value) ?? ratioOptions[0];
@@ -53,6 +72,10 @@ function getProgressStep(progress: number) {
 
 function isVideoUrl(url: string) {
   return url.includes('.mp4') || url.includes('.webm') || url.includes('.mov');
+}
+
+function modelType(model?: AiModel | null): GenerationType {
+  return model?.modality === 'video' ? 'video' : 'image';
 }
 
 function jobToImageAssets(job: Job): ImageAsset[] {
@@ -79,12 +102,14 @@ async function blobUrlToDataUrl(url: string) {
   return fileToDataUrl(new File([blob], 'asset-image', { type: blob.type || 'image/png' }));
 }
 
-function truncate(value = '', max = 32) {
+function truncate(value = '', max = 42) {
   return value.length > max ? `${value.slice(0, max)}...` : value;
 }
 
 export default function GeneratePage() {
   const [generationType, setGenerationType] = useState<GenerationType>('image');
+  const [models, setModels] = useState<AiModel[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState('auto');
   const [prompt, setPrompt] = useState(defaultPrompt);
   const [imageUrl, setImageUrl] = useState('');
   const [imagePreviewUrl, setImagePreviewUrl] = useState('');
@@ -98,6 +123,15 @@ export default function GeneratePage() {
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState(progressSteps[0]);
   const refreshingRef = useRef(false);
+  const searchParams = useSearchParams();
+
+  const selectedModel = useMemo(() => models.find((model) => model.id === selectedModelId), [models, selectedModelId]);
+  const activeType = selectedModelId === 'auto' ? generationType : modelType(selectedModel);
+
+  async function loadModels() {
+    const list = await apiRequest<AiModel[]>('/api/models');
+    setModels(list);
+  }
 
   async function uploadDataUrl(dataUrl: string) {
     return apiRequest<UploadResponse>('/api/uploads/images', { method: 'POST', body: JSON.stringify({ dataUrl }) });
@@ -160,20 +194,21 @@ export default function GeneratePage() {
     setJob({ id: '-', status: 'submitting' });
     try {
       const selectedRatio = getRatioOption(ratio);
+      const payload = {
+        ...(selectedModelId === 'auto' ? { generationType: activeType } : { modelId: selectedModelId }),
+        input: {
+          prompt,
+          ratio,
+          openaiSize: selectedRatio.openaiSize,
+          wanxSize: selectedRatio.wanxSize,
+          videoRatio: selectedRatio.videoRatio,
+          ...(activeType === 'video' ? { duration: Number(videoDuration) } : {}),
+          ...(activeType === 'video' && imageUrl ? { imageUrl } : {})
+        }
+      };
       const result = await apiRequest<Job>('/api/jobs', {
         method: 'POST',
-        body: JSON.stringify({
-          generationType,
-          input: {
-            prompt,
-            ratio,
-            openaiSize: selectedRatio.openaiSize,
-            wanxSize: selectedRatio.wanxSize,
-            videoRatio: selectedRatio.videoRatio,
-            ...(generationType === 'video' ? { duration: Number(videoDuration) } : {}),
-            ...(generationType === 'video' && imageUrl ? { imageUrl } : {})
-          }
-        })
+        body: JSON.stringify(payload)
       });
       setProgress(result.status === 'submitted' ? 76 : 100);
       setProgressMessage(result.status === 'submitted' ? getProgressStep(76) : { label: '生成完成', description: '结果已同步完成。', min: 100 });
@@ -212,8 +247,33 @@ export default function GeneratePage() {
   }
 
   useEffect(() => {
-    if (generationType === 'video') loadImageAssets();
-  }, [generationType]);
+    loadModels().catch(() => setModels([]));
+  }, []);
+
+  useEffect(() => {
+    const typeParam = searchParams.get('type');
+    const modelParam = searchParams.get('model') || searchParams.get('modelId');
+
+    if (typeParam === 'image' || typeParam === 'video') {
+      setGenerationType(typeParam);
+    }
+
+    if (!modelParam) return;
+    if (modelParam === 'auto') {
+      setSelectedModelId('auto');
+      return;
+    }
+
+    const model = models.find((item) => item.id === modelParam);
+    if (model) {
+      setSelectedModelId(model.id);
+      setGenerationType(modelType(model));
+    }
+  }, [models, searchParams]);
+
+  useEffect(() => {
+    if (activeType === 'video') loadImageAssets();
+  }, [activeType]);
 
   useEffect(() => {
     if (!loading && job?.status !== 'submitted') return;
@@ -240,157 +300,67 @@ export default function GeneratePage() {
   const isWorking = loading || job?.status === 'submitted' || job?.status === 'submitting' || job?.status === 'running';
   const isFinished = job?.status === 'succeeded' && resultAssets.length > 0;
   const displayStatus = useMemo(() => {
-    if (!job) return { label: '等待提交任务', tone: 'muted' };
-    if (job.status === 'failed') return { label: '生成失败', tone: 'error' };
-    if (job.status === 'succeeded') return { label: '生成完成', tone: 'success' };
-    if (job.status === 'submitted' || job.status === 'running') return { label: '生成中', tone: 'working' };
-    if (job.status === 'submitting') return { label: '提交中', tone: 'working' };
-    return { label: job.status, tone: 'muted' };
-  }, [job]);
+    if (!job) return { label: '等待输入', description: '默认使用智能分配；需要指定模型时，展开模型选择后再生成。' };
+    if (job.status === 'failed') return { label: '生成失败', description: job.error || '主模型和备用模型均不可用。' };
+    if (job.status === 'succeeded') return { label: '生成完成', description: '结果已保存到素材库，也可以保存到本地。' };
+    if (job.status === 'submitted' || job.status === 'running') return { label: '生成中', description: progressMessage.description };
+    if (job.status === 'submitting') return { label: '提交中', description: progressMessage.description };
+    return { label: job.status, description: progressMessage.description };
+  }, [job, progressMessage.description]);
 
   return (
-    <PageContainer pageTitle='AI 素材生成' pageDescription='客户使用的广告素材生成入口'>
-      <div className='grid gap-4 lg:grid-cols-[1fr_420px]'>
-        <Card>
-          <CardHeader><CardTitle>创建生成任务</CardTitle></CardHeader>
-          <CardContent className='space-y-4'>
-            <Tabs value={generationType} onValueChange={(value) => setGenerationType(value as GenerationType)}>
-              <TabsList>
-                <TabsTrigger value='image'>图片</TabsTrigger>
-                <TabsTrigger value='video'>视频</TabsTrigger>
-              </TabsList>
-            </Tabs>
-
-            <div className='rounded-md border border-border bg-muted/40 p-3 text-sm text-muted-foreground'>
-              系统会按管理员在模型中心配置的客户可用模型和调用顺序自动分配；主模型失败时自动尝试备用模型。
-            </div>
-
-            <div className='grid gap-4 md:grid-cols-2'>
-              <div className='space-y-2'>
-                <Label>{generationType === 'image' ? '图片比例' : '视频比例'}</Label>
-                <Select value={ratio} onValueChange={setRatio}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {ratioOptions.map((item) => (
-                      <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+    <PageContainer pageTitle='AI 素材生成' pageDescription='在左侧菜单展开选择模型，用对话方式生成图片或视频'>
+      <div className='min-h-[calc(100vh-160px)] overflow-hidden rounded-2xl border border-border bg-background'>
+        <main className='flex min-h-[640px] flex-col bg-gradient-to-b from-background to-muted/20'>
+          <section className='flex-1 overflow-y-auto p-5'>
+            <div className='mx-auto flex max-w-5xl flex-col gap-4'>
+              <div className='self-start rounded-2xl border border-border bg-background px-4 py-3 shadow-sm'>
+                <div className='font-semibold'>{selectedModelId === 'auto' ? `${generationType === 'image' ? '图片' : '视频'}智能分配` : selectedModel?.displayName}</div>
+                <div className='text-muted-foreground mt-1 max-w-2xl text-sm'>
+                  {selectedModelId === 'auto'
+                    ? '系统会按后台模型顺序自动调用，主模型失败后尝试备用模型。'
+                    : `${selectedModel?.providerName || selectedModel?.providerId} · ${capabilityLabel[selectedModel?.capability || ''] ?? selectedModel?.capability}`}
+                </div>
               </div>
 
-              {generationType === 'video' && (
-                <div className='space-y-2'>
-                  <Label>视频时长</Label>
-                  <Select value={videoDuration} onValueChange={setVideoDuration}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {videoDurationOptions.map((item) => (
-                        <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+              {prompt && (
+                <div className='self-end rounded-2xl bg-primary px-4 py-3 text-primary-foreground shadow-sm lg:max-w-[72%]'>
+                  <div className='whitespace-pre-wrap text-sm'>{prompt}</div>
                 </div>
               )}
-            </div>
 
-            <div className='space-y-2'>
-              <Label>提示词</Label>
-              <Textarea rows={8} value={prompt} onChange={(event) => setPrompt(event.target.value)} />
-            </div>
-
-            {generationType === 'video' && (
-              <div className='space-y-3'>
-                <Label>首帧图片（可选）</Label>
-                <Tabs defaultValue='upload'>
-                  <TabsList>
-                    <TabsTrigger value='upload'>上传图片</TabsTrigger>
-                    <TabsTrigger value='assets'>素材库选择</TabsTrigger>
-                  </TabsList>
-                  <TabsContent value='upload' className='space-y-3'>
-                    <Input type='file' accept='image/png,image/jpeg,image/webp,image/bmp' onChange={(event) => handleUpload(event.target.files?.[0])} disabled={uploading} />
-                    <p className='text-muted-foreground text-xs'>不上传则使用文生视频；上传或选择图片后使用图生视频。</p>
-                  </TabsContent>
-                  <TabsContent value='assets' className='space-y-3'>
-                    <div className='flex items-center justify-between gap-3'>
-                      <p className='text-muted-foreground text-xs'>选择素材库里的图片作为视频首帧。</p>
-                      <Button type='button' variant='outline' size='sm' onClick={loadImageAssets} disabled={assetsLoading}>{assetsLoading ? '刷新中...' : '刷新素材'}</Button>
-                    </div>
-                    {imageAssets.length ? (
-                      <div className='grid max-h-72 gap-3 overflow-y-auto rounded-md border border-border p-3 sm:grid-cols-3 lg:grid-cols-4'>
-                        {imageAssets.map((asset) => (
-                          <button
-                            type='button'
-                            key={asset.id}
-                            onClick={() => chooseAsset(asset)}
-                            className={`relative overflow-hidden rounded-md border text-left transition hover:border-primary ${imagePreviewUrl === asset.url || imageUrl === asset.url ? 'border-primary ring-2 ring-primary/30' : 'border-border'}`}
-                          >
-                            {(imagePreviewUrl === asset.url || imageUrl === asset.url) && (
-                              <span className='absolute right-2 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground shadow'>✓</span>
-                            )}
-                            <img src={asset.url} alt='素材图片' className='aspect-square w-full bg-muted object-cover' />
-                            <div className='text-muted-foreground p-2 text-xs'>{truncate(asset.prompt) || '素材图片'}</div>
-                          </button>
-                        ))}
+              <div className='self-start rounded-2xl border border-border bg-background px-4 py-3 shadow-sm lg:max-w-[80%]'>
+                <div className='flex items-start gap-3'>
+                  {isWorking && <div className='mt-1 h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent' />}
+                  <div className='flex-1'>
+                    <div className='font-semibold'>{displayStatus.label}</div>
+                    <div className={`${job?.status === 'failed' ? 'text-destructive' : 'text-muted-foreground'} mt-1 whitespace-pre-wrap text-sm`}>{displayStatus.description}</div>
+                    {job && job.status !== 'failed' && !isFinished && (
+                      <div className='mt-4 space-y-2'>
+                        <div className='h-2 overflow-hidden rounded-full bg-muted'>
+                          <div className='h-full rounded-full bg-primary transition-all duration-700' style={{ width: `${Math.max(8, progress)}%` }} />
+                        </div>
+                        <div className='text-muted-foreground flex justify-between text-xs'>
+                          <span>{progressMessage.label}</span>
+                          <span>{Math.round(progress)}%</span>
+                        </div>
                       </div>
-                    ) : (
-                      <div className='text-muted-foreground rounded-md border border-dashed p-6 text-center text-sm'>{assetsLoading ? '素材加载中...' : '暂无可选图片素材'}</div>
                     )}
-                  </TabsContent>
-                </Tabs>
-
-                {imagePreviewUrl && (
-                  <div className='flex items-center justify-between rounded-md border border-border bg-muted/40 px-3 py-2 text-sm'>
-                    <span>已选择首帧图片</span>
-                    <Button type='button' variant='ghost' size='sm' onClick={() => { setImageUrl(''); setImagePreviewUrl(''); }}>移除</Button>
+                    {(job?.status === 'submitted' || job?.status === 'running') && (
+                      <Button className='mt-3' variant='secondary' size='sm' onClick={() => refresh({ manual: true })}>同步任务状态</Button>
+                    )}
                   </div>
-                )}
-              </div>
-            )}
-
-            <Button disabled={loading || uploading} onClick={submit}>{loading ? '提交中...' : `创建${generationType === 'image' ? '图片' : '视频'}任务`}</Button>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader><CardTitle>任务结果</CardTitle></CardHeader>
-          <CardContent className='space-y-4'>
-            {!isFinished && (
-              <div className='rounded-lg border border-border bg-background/60 p-4'>
-                <div className='flex items-center justify-between gap-3'>
-                  <div>
-                    <div className='text-lg font-semibold'>{displayStatus.label}</div>
-                    <div className='text-muted-foreground text-sm'>{job ? progressMessage.description : '提交任务后会实时同步生成状态。'}</div>
-                  </div>
-                  {isWorking && <div className='h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent' />}
                 </div>
-                {job && job.status !== 'failed' && (
-                  <div className='mt-4 space-y-2'>
-                    <div className='h-2 overflow-hidden rounded-full bg-muted'>
-                      <div className='h-full rounded-full bg-primary transition-all duration-700' style={{ width: `${Math.max(8, progress)}%` }} />
-                    </div>
-                    <div className='text-muted-foreground flex justify-between text-xs'>
-                      <span>{progressMessage.label}</span>
-                      <span>{Math.round(progress)}%</span>
-                    </div>
-                  </div>
-                )}
-                {job?.status === 'failed' && <div className='text-destructive mt-3 whitespace-pre-wrap text-sm'>{job.error}</div>}
               </div>
-            )}
 
-            {resultAssets.length > 0 && (
-              <div className='space-y-3'>
-                <div>
-                  <div className='font-semibold'>生成完成</div>
-                  <div className='text-muted-foreground text-sm'>结果已保存到素材库，也可以保存到本地。</div>
-                </div>
-                <div className='grid gap-3'>
+              {resultAssets.length > 0 && (
+                <div className='self-start grid w-full gap-4 lg:grid-cols-2'>
                   {resultAssets.map((url, index) => (
-                    <div key={url} className='space-y-2'>
+                    <div key={url} className='rounded-2xl border border-border bg-background p-3 shadow-sm'>
                       {isVideoUrl(url) ? (
-                        <video controls className='max-h-[520px] w-full rounded-lg border border-border bg-black' src={url} />
+                        <video controls className='max-h-[520px] w-full rounded-xl bg-black object-contain' src={url} />
                       ) : (
-                        <img src={url} alt='生成结果' className='max-h-[520px] w-full rounded-lg border border-border object-contain' />
+                        <img src={url} alt='生成结果' className='max-h-[520px] w-full rounded-xl object-contain' />
                       )}
                       <div className='flex justify-center pt-4'>
                         <Button asChild size='sm'>
@@ -400,12 +370,92 @@ export default function GeneratePage() {
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
+              )}
+            </div>
+          </section>
 
-            {(job?.status === 'submitted' || job?.status === 'running') && <Button variant='secondary' onClick={() => refresh({ manual: true })}>同步任务状态</Button>}
-          </CardContent>
-        </Card>
+          <section className='border-t border-border bg-background/95 p-4'>
+            <div className='mx-auto grid max-w-5xl gap-3 lg:grid-cols-[1fr_280px]'>
+              <div className='rounded-2xl border border-border bg-muted/30 p-3'>
+                <Textarea
+                  rows={5}
+                  value={prompt}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  placeholder='像聊天一样描述你想生成的内容，包括场景、动作、镜头、质感等。'
+                  className='min-h-32 resize-none border-0 bg-transparent p-1 shadow-none focus-visible:ring-0'
+                />
+                <div className='mt-2 flex items-center justify-between gap-3'>
+                  <div className='text-muted-foreground text-xs'>
+                    当前：{selectedModelId === 'auto' ? '智能分配' : selectedModel?.displayName || '未选择模型'}
+                  </div>
+                  <Button onClick={submit} disabled={loading || uploading || !prompt.trim()}>{loading ? '生成中...' : '发送生成'}</Button>
+                </div>
+              </div>
+
+              <div className='rounded-2xl border border-border bg-muted/30 p-3'>
+                <div className='grid gap-3'>
+                  <div className='space-y-1.5'>
+                    <Label>{activeType === 'image' ? '图片比例' : '视频比例'}</Label>
+                    <Select value={ratio} onValueChange={setRatio}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {ratioOptions.map((item) => (
+                          <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {activeType === 'video' && (
+                    <>
+                      <div className='space-y-1.5'>
+                        <Label>视频时长</Label>
+                        <Select value={videoDuration} onValueChange={setVideoDuration}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {videoDurationOptions.map((item) => (
+                              <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className='space-y-2'>
+                        <Label>首帧图片（可选）</Label>
+                        <Tabs defaultValue='upload'>
+                          <TabsList className='grid w-full grid-cols-2'>
+                            <TabsTrigger value='upload'>上传</TabsTrigger>
+                            <TabsTrigger value='assets'>素材库</TabsTrigger>
+                          </TabsList>
+                          <TabsContent value='upload' className='space-y-2'>
+                            <Input type='file' accept='image/png,image/jpeg,image/webp,image/bmp' onChange={(event) => handleUpload(event.target.files?.[0])} disabled={uploading} />
+                          </TabsContent>
+                          <TabsContent value='assets' className='space-y-2'>
+                            <Button type='button' variant='outline' size='sm' className='w-full' onClick={loadImageAssets} disabled={assetsLoading}>{assetsLoading ? '刷新中...' : '刷新素材'}</Button>
+                            <div className='grid max-h-40 grid-cols-3 gap-2 overflow-y-auto'>
+                              {imageAssets.map((asset) => (
+                                <button type='button' key={asset.id} onClick={() => chooseAsset(asset)} className={`relative overflow-hidden rounded-md border ${imagePreviewUrl === asset.url || imageUrl === asset.url ? 'border-primary ring-2 ring-primary/30' : 'border-border'}`}>
+                                  {(imagePreviewUrl === asset.url || imageUrl === asset.url) && <span className='absolute right-1 top-1 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground'>✓</span>}
+                                  <img src={asset.url} alt='素材图片' className='aspect-square w-full object-cover' />
+                                </button>
+                              ))}
+                            </div>
+                          </TabsContent>
+                        </Tabs>
+                        {imagePreviewUrl && (
+                          <div className='flex items-center justify-between rounded-md border bg-background px-2 py-1 text-xs'>
+                            <span>已选首帧</span>
+                            <Button type='button' variant='ghost' size='sm' onClick={() => { setImageUrl(''); setImagePreviewUrl(''); }}>移除</Button>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
+        </main>
       </div>
     </PageContainer>
   );
