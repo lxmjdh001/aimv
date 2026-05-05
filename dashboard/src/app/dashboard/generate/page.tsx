@@ -314,17 +314,11 @@ export default function GeneratePage() {
         <main className='flex min-h-[640px] flex-col bg-gradient-to-b from-background to-muted/20'>
           <section className='flex-1 overflow-y-auto p-5'>
             <div className='mx-auto flex max-w-5xl flex-col gap-4'>
-              <div className='self-start rounded-2xl border border-border bg-background px-4 py-3 shadow-sm'>
-                <div className='font-semibold'>{selectedModelId === 'auto' ? '未选择模型' : selectedModel?.displayName}</div>
-                <div className='text-muted-foreground mt-1 max-w-2xl text-sm'>
-                  {selectedModelId === 'auto'
-                    ? '请从左侧菜单选择一个模型。'
-                    : `${selectedModel?.providerName || selectedModel?.providerId} · ${capabilityLabel[selectedModel?.capability || ''] ?? selectedModel?.capability}`}
-                </div>
-              </div>
-
               {prompt && (
                 <div className='self-end rounded-2xl bg-primary px-4 py-3 text-primary-foreground shadow-sm lg:max-w-[72%]'>
+                  <div className='mb-2 text-left text-xs opacity-80'>
+                    {selectedModelId === 'auto' ? '未选择模型' : selectedModel?.displayName}
+                  </div>
                   <div className='whitespace-pre-wrap text-sm'>{prompt}</div>
                 </div>
               )}
