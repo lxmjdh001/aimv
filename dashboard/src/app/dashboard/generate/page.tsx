@@ -309,8 +309,8 @@ export default function GeneratePage() {
   }, [job, progressMessage.description]);
 
   return (
-    <PageContainer pageTitle='AI 素材生成' pageDescription='在左侧菜单展开选择模型，用对话方式生成图片或视频'>
-      <div className='min-h-[calc(100vh-160px)] overflow-hidden rounded-2xl border border-border bg-background'>
+    <PageContainer>
+      <div className='min-h-[calc(100vh-104px)] overflow-hidden rounded-2xl border border-border bg-background'>
         <main className='flex min-h-[640px] flex-col bg-gradient-to-b from-background to-muted/20'>
           <section className='flex-1 overflow-y-auto p-5'>
             <div className='mx-auto flex max-w-5xl flex-col gap-4'>
