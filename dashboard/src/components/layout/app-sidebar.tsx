@@ -103,7 +103,7 @@ export default function AppSidebar() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { isOpen } = useMediaQuery();
-  const { user, logout } = useAuth();
+  const { user, loading, logout } = useAuth();
   const router = useRouter();
   const filteredGroups = useFilteredNavGroups(navGroups);
   const [models, setModels] = React.useState<SidebarModel[]>([]);
@@ -114,10 +114,11 @@ export default function AppSidebar() {
   React.useEffect(() => {}, [isOpen]);
 
   React.useEffect(() => {
+    if (loading || !user) return;
     apiRequest<SidebarModel[]>('/api/models')
       .then(setModels)
       .catch(() => setModels([]));
-  }, []);
+  }, [loading, user]);
 
   async function handleLogout() {
     await logout();

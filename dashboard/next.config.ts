@@ -35,6 +35,7 @@ const baseConfig: NextConfig = {
       { source: '/api/providers', destination: `${apiServer}/api/providers` },
       { source: '/api/providers/:path*', destination: `${apiServer}/api/providers/:path*` },
       { source: '/api/admin/:path*', destination: `${apiServer}/api/admin/:path*` },
+      { source: '/api/models', destination: `${apiServer}/api/models` },
       { source: '/api/jobs', destination: `${apiServer}/api/jobs` },
       { source: '/api/jobs/:path*', destination: `${apiServer}/api/jobs/:path*` },
       { source: '/outputs/:path*', destination: `${apiServer}/outputs/:path*` },
