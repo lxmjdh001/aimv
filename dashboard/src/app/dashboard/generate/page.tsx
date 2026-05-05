@@ -300,8 +300,8 @@ export default function GeneratePage() {
   const isWorking = loading || job?.status === 'submitted' || job?.status === 'submitting' || job?.status === 'running';
   const isFinished = job?.status === 'succeeded' && resultAssets.length > 0;
   const displayStatus = useMemo(() => {
-    if (!job) return { label: '等待输入', description: '默认使用智能分配；需要指定模型时，展开模型选择后再生成。' };
-    if (job.status === 'failed') return { label: '生成失败', description: job.error || '主模型和备用模型均不可用。' };
+    if (!job) return { label: '等待输入', description: '在左侧展开 AI 素材生成，选择模型后输入内容。' };
+    if (job.status === 'failed') return { label: '生成失败', description: job.error || '模型调用失败。' };
     if (job.status === 'succeeded') return { label: '生成完成', description: '结果已保存到素材库，也可以保存到本地。' };
     if (job.status === 'submitted' || job.status === 'running') return { label: '生成中', description: progressMessage.description };
     if (job.status === 'submitting') return { label: '提交中', description: progressMessage.description };
@@ -315,10 +315,10 @@ export default function GeneratePage() {
           <section className='flex-1 overflow-y-auto p-5'>
             <div className='mx-auto flex max-w-5xl flex-col gap-4'>
               <div className='self-start rounded-2xl border border-border bg-background px-4 py-3 shadow-sm'>
-                <div className='font-semibold'>{selectedModelId === 'auto' ? `${generationType === 'image' ? '图片' : '视频'}智能分配` : selectedModel?.displayName}</div>
+                <div className='font-semibold'>{selectedModelId === 'auto' ? '未选择模型' : selectedModel?.displayName}</div>
                 <div className='text-muted-foreground mt-1 max-w-2xl text-sm'>
                   {selectedModelId === 'auto'
-                    ? '系统会按后台模型顺序自动调用，主模型失败后尝试备用模型。'
+                    ? '请从左侧菜单选择一个模型。'
                     : `${selectedModel?.providerName || selectedModel?.providerId} · ${capabilityLabel[selectedModel?.capability || ''] ?? selectedModel?.capability}`}
                 </div>
               </div>
@@ -386,9 +386,11 @@ export default function GeneratePage() {
                 />
                 <div className='mt-2 flex items-center justify-between gap-3'>
                   <div className='text-muted-foreground text-xs'>
-                    当前：{selectedModelId === 'auto' ? '智能分配' : selectedModel?.displayName || '未选择模型'}
+                    当前：{selectedModelId === 'auto' ? '未选择模型' : selectedModel?.displayName || '未选择模型'}
                   </div>
-                  <Button onClick={submit} disabled={loading || uploading || !prompt.trim()}>{loading ? '生成中...' : '发送生成'}</Button>
+                  <Button onClick={submit} disabled={loading || uploading || !prompt.trim() || selectedModelId === 'auto'}>
+                    {loading ? '生成中...' : selectedModelId === 'auto' ? '请选择模型' : '发送生成'}
+                  </Button>
                 </div>
               </div>
 
