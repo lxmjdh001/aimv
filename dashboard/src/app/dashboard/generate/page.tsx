@@ -15,18 +15,6 @@ type GenerationType = 'image' | 'video';
 type Job = { id: string; status: string; taskType?: string; workflowType?: string; prompt?: string; outputs?: { image_url?: string; video_url?: string; images?: string[] }; error?: string; remoteJob?: any; createdAt?: string };
 type UploadResponse = { url: string; publicUrl: string };
 type ImageAsset = { id: string; url: string; prompt: string; createdAt?: string };
-type AiModel = {
-  id: string;
-  displayName: string;
-  providerId: string;
-  providerName?: string;
-  modelName: string;
-  modality: string;
-  capability: string;
-  enabled: boolean;
-  customerEnabled: boolean;
-  sortOrder: number;
-};
 
 const defaultPrompt = '写实摄影风格，一名30岁左右的长发女性南非工人在工作间内工作，穿着家用蓝色带花短袖、防护手套，正在检查一串串手串是否制作完整,手串有五颜六色的透明珠子，她的工作就是制作精美手串，背景有家用墙壁闹钟、光线是中午的阳光，商业广告质感。';
 
@@ -55,13 +43,6 @@ const progressSteps = [
   { min: 92, label: '马上完成', description: '正在同步最终结果。' }
 ];
 
-const capabilityLabel: Record<string, string> = {
-  text_to_image: '文生图',
-  image_to_image: '图像编辑',
-  text_to_video: '文生视频',
-  image_to_video: '图生视频'
-};
-
 function getRatioOption(value: string) {
   return ratioOptions.find((item) => item.value === value) ?? ratioOptions[0];
 }
@@ -72,10 +53,6 @@ function getProgressStep(progress: number) {
 
 function isVideoUrl(url: string) {
   return url.includes('.mp4') || url.includes('.webm') || url.includes('.mov');
-}
-
-function modelType(model?: AiModel | null): GenerationType {
-  return model?.modality === 'video' ? 'video' : 'image';
 }
 
 function jobToImageAssets(job: Job): ImageAsset[] {
@@ -108,8 +85,6 @@ function truncate(value = '', max = 42) {
 
 export default function GeneratePage() {
   const [generationType, setGenerationType] = useState<GenerationType>('image');
-  const [models, setModels] = useState<AiModel[]>([]);
-  const [selectedModelId, setSelectedModelId] = useState('auto');
   const [prompt, setPrompt] = useState(defaultPrompt);
   const [imageUrl, setImageUrl] = useState('');
   const [imagePreviewUrl, setImagePreviewUrl] = useState('');
@@ -125,14 +100,7 @@ export default function GeneratePage() {
   const [progressMessage, setProgressMessage] = useState(progressSteps[0]);
   const refreshingRef = useRef(false);
   const searchParams = useSearchParams();
-
-  const selectedModel = useMemo(() => models.find((model) => model.id === selectedModelId), [models, selectedModelId]);
-  const activeType = selectedModelId === 'auto' ? generationType : modelType(selectedModel);
-
-  async function loadModels() {
-    const list = await apiRequest<AiModel[]>('/api/models');
-    setModels(list);
-  }
+  const activeType = generationType;
 
   async function uploadDataUrl(dataUrl: string) {
     return apiRequest<UploadResponse>('/api/uploads/images', { method: 'POST', body: JSON.stringify({ dataUrl }) });
@@ -197,7 +165,7 @@ export default function GeneratePage() {
     try {
       const selectedRatio = getRatioOption(ratio);
       const payload = {
-        ...(selectedModelId === 'auto' ? { generationType: activeType } : { modelId: selectedModelId }),
+        generationType: activeType,
         input: {
           prompt,
           ratio,
@@ -249,29 +217,12 @@ export default function GeneratePage() {
   }
 
   useEffect(() => {
-    loadModels().catch(() => setModels([]));
-  }, []);
-
-  useEffect(() => {
     const typeParam = searchParams.get('type');
-    const modelParam = searchParams.get('model') || searchParams.get('modelId');
 
     if (typeParam === 'image' || typeParam === 'video') {
       setGenerationType(typeParam);
     }
-
-    if (!modelParam) return;
-    if (modelParam === 'auto') {
-      setSelectedModelId('auto');
-      return;
-    }
-
-    const model = models.find((item) => item.id === modelParam);
-    if (model) {
-      setSelectedModelId(model.id);
-      setGenerationType(modelType(model));
-    }
-  }, [models, searchParams]);
+  }, [searchParams]);
 
   useEffect(() => {
     if (activeType === 'video') loadImageAssets();
@@ -302,13 +253,13 @@ export default function GeneratePage() {
   const isWorking = loading || job?.status === 'submitted' || job?.status === 'submitting' || job?.status === 'running';
   const isFinished = job?.status === 'succeeded' && resultAssets.length > 0;
   const displayStatus = useMemo(() => {
-    if (!job) return { label: '等待输入', description: '在左侧展开 AI 素材生成，选择模型后输入内容。' };
+    if (!job) return { label: '等待输入', description: `当前入口：${generationType === 'image' ? '图片生成' : '视频生成'}。` };
     if (job.status === 'failed') return { label: '生成失败', description: job.error || '模型调用失败。' };
     if (job.status === 'succeeded') return { label: '生成完成', description: '结果已保存到素材库，也可以保存到本地。' };
     if (job.status === 'submitted' || job.status === 'running') return { label: '生成中', description: progressMessage.description };
     if (job.status === 'submitting') return { label: '提交中', description: progressMessage.description };
     return { label: job.status, description: progressMessage.description };
-  }, [job, progressMessage.description]);
+  }, [generationType, job, progressMessage.description]);
 
   return (
     <PageContainer>
@@ -319,7 +270,7 @@ export default function GeneratePage() {
               {prompt && (
                 <div className='self-end rounded-2xl bg-primary px-4 py-3 text-primary-foreground shadow-sm lg:max-w-[72%]'>
                   <div className='mb-2 text-left text-xs opacity-80'>
-                    {selectedModelId === 'auto' ? '未选择模型' : selectedModel?.displayName}
+                    {generationType === 'image' ? '图片生成' : '视频生成'}
                   </div>
                   <div className='whitespace-pre-wrap text-sm'>{prompt}</div>
                 </div>
@@ -382,10 +333,10 @@ export default function GeneratePage() {
                 />
                 <div className='mt-2 flex items-center justify-between gap-3'>
                   <div className='text-muted-foreground text-xs'>
-                    当前：{selectedModelId === 'auto' ? '未选择模型' : selectedModel?.displayName || '未选择模型'}
+                    当前：{generationType === 'image' ? '图片生成' : '视频生成'}
                   </div>
-                  <Button onClick={submit} disabled={loading || uploading || !prompt.trim() || selectedModelId === 'auto'}>
-                    {loading ? '生成中...' : selectedModelId === 'auto' ? '请选择模型' : '发送生成'}
+                  <Button onClick={submit} disabled={loading || uploading || !prompt.trim()}>
+                    {loading ? '生成中...' : '发送生成'}
                   </Button>
                 </div>
               </div>

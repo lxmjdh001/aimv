@@ -26,25 +26,13 @@ import {
 import { navGroups } from '@/config/nav-config';
 import { useMediaQuery } from '@/hooks/use-media-query';
 import { useFilteredNavGroups } from '@/hooks/use-nav';
-import { apiRequest } from '@/lib/api-client';
 import { useAuth } from '@/lib/auth-client';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import * as React from 'react';
 import { Icons } from '../icons';
 
-type SidebarModel = {
-  id: string;
-  displayName: string;
-  providerId: string;
-  providerName?: string;
-  modelName: string;
-  modality: string;
-  capability: string;
-  sortOrder: number;
-};
-
-function SidebarModelCard({
+function SidebarGenerateEntry({
   href,
   title,
   badge,
@@ -103,22 +91,12 @@ export default function AppSidebar() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { isOpen } = useMediaQuery();
-  const { user, loading, logout } = useAuth();
+  const { user, logout } = useAuth();
   const router = useRouter();
   const filteredGroups = useFilteredNavGroups(navGroups);
-  const [models, setModels] = React.useState<SidebarModel[]>([]);
-
-  const selectedModelId = searchParams.get('model') || searchParams.get('modelId') || 'auto';
-  const sortedModels = React.useMemo(() => [...models].sort((a, b) => a.sortOrder - b.sortOrder), [models]);
+  const selectedType = searchParams.get('type') || 'image';
 
   React.useEffect(() => {}, [isOpen]);
-
-  React.useEffect(() => {
-    if (loading || !user) return;
-    apiRequest<SidebarModel[]>('/api/models')
-      .then(setModels)
-      .catch(() => setModels([]));
-  }, [loading, user]);
 
   async function handleLogout() {
     await logout();
@@ -164,20 +142,20 @@ export default function AppSidebar() {
                         </CollapsibleTrigger>
                         <CollapsibleContent>
                           <SidebarMenuSub className='mx-0 gap-2 border-l-0 px-0 py-2'>
-                            {sortedModels.map((model) => (
-                              <SidebarModelCard
-                                key={model.id}
-                                href={`/dashboard/generate?type=${model.modality === 'video' ? 'video' : 'image'}&model=${model.id}`}
-                                title={model.displayName}
-                                badge={model.modality === 'video' ? '视频' : '图片'}
-                                active={pathname === item.url && selectedModelId === model.id}
-                                icon={model.modality === 'video' ? 'video' : 'image'}
-                              />
-                            ))}
-
-                            {!sortedModels.length && (
-                              <div className='text-muted-foreground px-2 py-2 text-xs'>暂无可用模型</div>
-                            )}
+                            <SidebarGenerateEntry
+                              href='/dashboard/generate?type=image'
+                              title='图片生成'
+                              badge='图片'
+                              active={pathname === item.url && selectedType !== 'video'}
+                              icon='image'
+                            />
+                            <SidebarGenerateEntry
+                              href='/dashboard/generate?type=video'
+                              title='视频生成'
+                              badge='视频'
+                              active={pathname === item.url && selectedType === 'video'}
+                              icon='video'
+                            />
                           </SidebarMenuSub>
                         </CollapsibleContent>
                       </SidebarMenuItem>
