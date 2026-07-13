@@ -50,6 +50,13 @@ export const navGroups: NavGroup[] = [
         icon: 'teams',
         items: [],
         access: { role: 'admin' }
+      },
+      {
+        title: '积分管理',
+        url: '/dashboard/points',
+        icon: 'creditCard',
+        items: [],
+        access: { role: 'admin' }
       }
     ]
   },
@@ -57,7 +64,7 @@ export const navGroups: NavGroup[] = [
     label: '账户',
     items: [
       {
-        title: '我的余额',
+        title: '我的积分',
         url: '/dashboard/billing',
         icon: 'creditCard',
         items: []

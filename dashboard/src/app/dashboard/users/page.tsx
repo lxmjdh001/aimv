@@ -25,8 +25,18 @@ type UserRow = {
   createdAt: string;
 };
 
-function money(value?: number) {
-  return `¥${Number(value ?? 0).toFixed(2)}`;
+type WalletTransaction = {
+  id: string;
+  type: string;
+  amount: number;
+  paymentAmount?: number | null;
+  balanceAfter: number;
+  note?: string;
+  createdAt: string;
+};
+
+function points(value?: number) {
+  return `${Number(value ?? 0).toFixed(2)} 积分`;
 }
 
 function formatTime(value?: string | null) {
@@ -47,9 +57,21 @@ export default function UsersPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({ email: '', name: '', password: '', role: 'customer' });
+  const [rechargeUser, setRechargeUser] = useState<UserRow | null>(null);
+  const [rechargeAmount, setRechargeAmount] = useState('');
+  const [rechargeNote, setRechargeNote] = useState('');
+  const [recharging, setRecharging] = useState(false);
+  const [transactionUser, setTransactionUser] = useState<UserRow | null>(null);
+  const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
+  const [pointsPerCny, setPointsPerCny] = useState(100);
 
   async function load() {
-    setUsers(await apiRequest<UserRow[]>('/api/admin/users'));
+    const [userList, pointSettings] = await Promise.all([
+      apiRequest<UserRow[]>('/api/admin/users'),
+      apiRequest<{ pointsPerCny: number }>('/api/admin/points/settings')
+    ]);
+    setUsers(userList);
+    setPointsPerCny(pointSettings.pointsPerCny);
   }
 
   async function create() {
@@ -77,10 +99,32 @@ export default function UsersPage() {
     }
   }
 
+  async function submitRecharge() {
+    if (!rechargeUser) return;
+    setRecharging(true);
+    try {
+      await apiRequest(`/api/admin/users/${rechargeUser.id}/recharge`, {
+        method: 'POST',
+        body: JSON.stringify({ paymentAmount: Number(rechargeAmount), note: rechargeNote })
+      });
+      setRechargeUser(null);
+      setRechargeAmount('');
+      setRechargeNote('');
+      await load();
+    } finally {
+      setRecharging(false);
+    }
+  }
+
+  async function openTransactions(target: UserRow) {
+    setTransactionUser(target);
+    setTransactions(await apiRequest<WalletTransaction[]>(`/api/admin/users/${target.id}/transactions`));
+  }
+
   useEffect(() => { load().catch(() => setUsers([])); }, []);
 
   return (
-    <PageContainer pageTitle='用户管理' pageDescription='用户列表、启用状态、余额和充值预留' access={user?.role === 'admin'}>
+    <PageContainer pageTitle='用户管理' pageDescription='用户列表、启用状态、积分充值和消费记录' access={user?.role === 'admin'}>
       <div className='space-y-4'>
         <div className='flex justify-end'>
           <Button onClick={() => setCreateOpen(true)}>创建用户</Button>
@@ -99,9 +143,9 @@ export default function UsersPage() {
                     <TableHead className='min-w-56'>用户</TableHead>
                     <TableHead>角色</TableHead>
                     <TableHead>状态</TableHead>
-                    <TableHead>现有金额</TableHead>
-                    <TableHead>本月已用</TableHead>
-                    <TableHead>历史充值金额</TableHead>
+                    <TableHead>现有积分</TableHead>
+                    <TableHead>本月消耗</TableHead>
+                    <TableHead>历史充值积分</TableHead>
                     <TableHead className='min-w-36'>最后登录</TableHead>
                     <TableHead className='min-w-36'>注册时间</TableHead>
                     <TableHead className='text-right'>操作</TableHead>
@@ -120,13 +164,14 @@ export default function UsersPage() {
                           {item.enabled ? '启用' : '禁用'}
                         </span>
                       </TableCell>
-                      <TableCell>{money(item.balance)}</TableCell>
-                      <TableCell>{money(item.monthlyUsed)}</TableCell>
-                      <TableCell>{money(item.totalRecharged)}</TableCell>
+                      <TableCell>{points(item.balance)}</TableCell>
+                      <TableCell>{points(item.monthlyUsed)}</TableCell>
+                      <TableCell>{points(item.totalRecharged)}</TableCell>
                       <TableCell>{formatTime(item.lastLoginAt)}</TableCell>
                       <TableCell>{formatTime(item.createdAt)}</TableCell>
                       <TableCell className='space-x-2 text-right'>
-                        <Button variant='outline' size='sm' disabled>充值</Button>
+                        <Button variant='outline' size='sm' onClick={() => setRechargeUser(item)}>充值</Button>
+                        <Button variant='outline' size='sm' onClick={() => openTransactions(item)}>流水</Button>
                         <Button variant={item.enabled ? 'destructive' : 'outline'} size='sm' onClick={() => toggleEnabled(item)} disabled={savingUserId === item.id}>
                           {savingUserId === item.id ? '保存中...' : item.enabled ? '禁用' : '启用'}
                         </Button>
@@ -169,6 +214,37 @@ export default function UsersPage() {
             <Button variant='outline' onClick={() => setCreateOpen(false)}>取消</Button>
             <Button onClick={create} disabled={creating}>{creating ? '创建中...' : '创建用户'}</Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(rechargeUser)} onOpenChange={(open) => { if (!open) setRechargeUser(null); }}>
+        <DialogContent className='sm:max-w-md'>
+          <DialogHeader><DialogTitle>充值积分</DialogTitle></DialogHeader>
+          <div className='space-y-4'>
+            <div className='text-muted-foreground text-sm'>{rechargeUser?.email}，当前 {points(rechargeUser?.balance)}</div>
+            <div className='space-y-2'><Label>客户支付金额（人民币）</Label><Input type='number' min='0.01' step='0.01' value={rechargeAmount} onChange={(event) => setRechargeAmount(event.target.value)} placeholder='例如 100' /></div>
+            <div className='rounded-md bg-muted p-3 text-sm'>当前比例：¥1 = {pointsPerCny} 积分，预计到账 <span className='font-semibold'>{points(Number(rechargeAmount || 0) * pointsPerCny)}</span></div>
+            <div className='space-y-2'><Label>备注</Label><Input value={rechargeNote} onChange={(event) => setRechargeNote(event.target.value)} placeholder='线下转账、活动赠送等' /></div>
+          </div>
+          <DialogFooter>
+            <Button variant='outline' onClick={() => setRechargeUser(null)}>取消</Button>
+            <Button onClick={submitRecharge} disabled={recharging || Number(rechargeAmount) <= 0}>{recharging ? '充值中...' : '确认发放积分'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(transactionUser)} onOpenChange={(open) => { if (!open) setTransactionUser(null); }}>
+        <DialogContent className='sm:max-w-2xl'>
+          <DialogHeader><DialogTitle>积分流水 · {transactionUser?.email}</DialogTitle></DialogHeader>
+          <div className='max-h-[60vh] overflow-y-auto rounded-md border'>
+            <Table>
+              <TableHeader><TableRow><TableHead>时间</TableHead><TableHead>类型</TableHead><TableHead>支付金额</TableHead><TableHead>积分变动</TableHead><TableHead>剩余积分</TableHead><TableHead>备注</TableHead></TableRow></TableHeader>
+              <TableBody>
+                {transactions.map((item) => <TableRow key={item.id}><TableCell>{formatTime(item.createdAt)}</TableCell><TableCell>{item.type === 'recharge' ? '充值' : item.type === 'consume' ? 'AI 消耗' : '调整'}</TableCell><TableCell>{item.paymentAmount == null ? '-' : `¥${item.paymentAmount.toFixed(2)}`}</TableCell><TableCell className={item.amount >= 0 ? 'text-emerald-600' : 'text-red-600'}>{item.amount >= 0 ? '+' : ''}{points(item.amount)}</TableCell><TableCell>{points(item.balanceAfter)}</TableCell><TableCell>{item.note || '-'}</TableCell></TableRow>)}
+                {!transactions.length && <TableRow><TableCell colSpan={6} className='text-muted-foreground h-24 text-center'>暂无流水</TableCell></TableRow>}
+              </TableBody>
+            </Table>
+          </div>
         </DialogContent>
       </Dialog>
     </PageContainer>

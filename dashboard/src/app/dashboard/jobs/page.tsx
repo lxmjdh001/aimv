@@ -57,7 +57,7 @@ function typeLabel(job: Job) {
 
 function formatCost(cost?: JobCost) {
   if (!cost) return '待统计';
-  if (typeof cost.amount === 'number') return `${cost.amount.toFixed(4)} ${cost.currency || 'CNY'}`;
+  if (typeof cost.amount === 'number') return `${cost.amount.toFixed(2)} 积分`;
   const parts = [];
   if (cost.tokens) parts.push(`${cost.tokens} tokens`);
   if (cost.imageCount) parts.push(`${cost.imageCount} 张`);

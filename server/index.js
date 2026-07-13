@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { clearSessionCookie, getRequestUser, loginUser, logoutRequest, sessionCookie } from './auth.js';
-import { createJob, createUser, ensureDataDirs, findModel, findProvider, findUser, getJob, listJobs, listModels, listProviders, listUsers, saveModel, saveProvider, saveProviders, updateJob, updateUser } from './storage.js';
+import { chargeJob, createJob, createUser, ensureDataDirs, findModel, findProvider, findUser, getJob, getPointSettings, listJobs, listModels, listProviders, listUsers, listWalletTransactions, rechargeUser, saveModel, savePointSettings, saveProvider, saveProviders, updateJob, updateUser } from './storage.js';
 import { checkBailianStatus, pollBailianTask, submitBailianTask } from './bailian.js';
 import { checkComfyStatus, submitComfyWorkflow } from './comfyui.js';
 import { checkOpenAIImageStatus, submitOpenAIImageTask } from './openai-image.js';
@@ -391,6 +391,21 @@ function applyModelToJob(job, provider, model, input) {
   job.input = input;
 }
 
+function modelPointCost(model) {
+  const pointCost = Number(model?.config?.pointCost ?? model?.config?.price ?? 0);
+  return Number.isFinite(pointCost) && pointCost >= 0 ? Math.round(pointCost * 100) / 100 : 0;
+}
+
+async function chargeSucceededJob(job, model) {
+  if (job.status !== 'succeeded' || job.chargedAt) return job;
+  const pointCost = modelPointCost(model ?? await findModel(job.input?.modelId));
+  const result = await chargeJob(job.id, job.userId, pointCost, `AI 生成任务 ${job.id}`);
+  if (result?.error === 'INSUFFICIENT_BALANCE') {
+    throw Object.assign(new Error('积分不足，请先充值积分'), { statusCode: 402 });
+  }
+  return await getJob(job.id, { userId: job.userId }) ?? job;
+}
+
 async function submitJobWithFallback(currentUser, models, rawInput) {
   if (!models.length) throw Object.assign(new Error('当前类型暂无可用模型，请联系管理员配置主模型和备用模型'), { statusCode: 400 });
 
@@ -426,7 +441,7 @@ async function submitJobWithFallback(currentUser, models, rawInput) {
       Object.assign(job, result);
       job.remoteJob = { ...(job.remoteJob ?? {}), fallbackAttempts: attempts };
       await updateJob(job);
-      return job;
+      return chargeSucceededJob(job, model);
     } catch (error) {
       attempts.push({ modelId: model.id, modelName: model.displayName, providerId: provider.id, status: 'failed', error: error.message });
       job.status = 'failed';
@@ -465,7 +480,8 @@ async function refreshJob(job) {
     job.outputs = { ...job.outputs, remote_video_url: remoteVideoUrl, video_url: await persistRemoteAsset(job, remoteVideoUrl, 'video', 0) };
   }
   if (result.status === 'failed') job.error = result.response?.output?.message ?? result.response?.message ?? 'Aliyun task failed';
-  return updateJob(job);
+  await updateJob(job);
+  return chargeSucceededJob(job);
 }
 
 async function route(request, response) {
@@ -593,6 +609,29 @@ async function route(request, response) {
     });
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/account/transactions') {
+    const currentUser = requireLogin(request, response);
+    if (!currentUser) return;
+    return sendJson(response, 200, await listWalletTransactions({ userId: currentUser.id, limit: Number(url.searchParams.get('limit') ?? 100) }));
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/admin/points/settings') {
+    if (!requireRole(request, response, ['admin'])) return;
+    return sendJson(response, 200, { ...(await getPointSettings()), models: await listModels() });
+  }
+
+  if (request.method === 'PUT' && url.pathname === '/api/admin/points/settings') {
+    if (!requireRole(request, response, ['admin'])) return;
+    const body = await readBody(request);
+    const settings = await savePointSettings({ pointsPerCny: body.pointsPerCny });
+    for (const item of body.models ?? []) {
+      const existing = await findModel(item.id);
+      if (!existing) continue;
+      await saveModel({ ...existing, config: { ...existing.config, pointCost: Math.max(0, Number(item.pointCost) || 0) } });
+    }
+    return sendJson(response, 200, { ...settings, models: await listModels() });
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/admin/users') {
     if (!requireRole(request, response, ['admin'])) return;
     return sendJson(response, 200, await listUsers());
@@ -611,6 +650,26 @@ async function route(request, response) {
     if (!requireRole(request, response, ['admin'])) return;
     const body = await readBody(request);
     return sendJson(response, 201, await createUser(body));
+  }
+
+  if (request.method === 'POST' && /^\/api\/admin\/users\/[^/]+\/recharge$/.test(url.pathname)) {
+    const operator = requireRole(request, response, ['admin']);
+    if (!operator) return;
+    const userId = decodeURIComponent(url.pathname.split('/')[4]);
+    const body = await readBody(request);
+    const paymentAmount = Math.round(Number(body.paymentAmount) * 100) / 100;
+    if (!Number.isFinite(paymentAmount) || paymentAmount <= 0) return sendJson(response, 400, { error: '充值金额必须大于 0' });
+    const { pointsPerCny } = await getPointSettings();
+    const points = Math.round(paymentAmount * pointsPerCny * 100) / 100;
+    const result = await rechargeUser(userId, points, operator.id, String(body.note ?? '').trim(), paymentAmount);
+    if (!result) return sendJson(response, 404, { error: 'User not found' });
+    return sendJson(response, 200, result);
+  }
+
+  if (request.method === 'GET' && /^\/api\/admin\/users\/[^/]+\/transactions$/.test(url.pathname)) {
+    if (!requireRole(request, response, ['admin'])) return;
+    const userId = decodeURIComponent(url.pathname.split('/')[4]);
+    return sendJson(response, 200, await listWalletTransactions({ userId, limit: Number(url.searchParams.get('limit') ?? 100) }));
   }
 
   if (request.method === 'GET' && url.pathname.startsWith('/api/providers/') && url.pathname.endsWith('/status')) {
@@ -649,6 +708,8 @@ async function route(request, response) {
     if (rawInput.imageUrl) rawInput.imageUrl = toPublicUrl(request, rawInput.imageUrl);
 
     if (selectedModel) {
+      const account = await findUser(currentUser.id);
+      if ((account?.balance ?? 0) < modelPointCost(selectedModel)) return sendJson(response, 402, { error: '积分不足，请先充值积分' });
       const provider = await findProvider(selectedModel.providerId, { includeSecrets: true });
       if (!provider || !provider.enabled) return sendJson(response, 400, { error: 'Provider not found or disabled' });
       const job = await submitJobWithFallback(currentUser, [selectedModel], rawInput);
@@ -657,7 +718,10 @@ async function route(request, response) {
 
     if (body.generationType) {
       const customerModels = await listModels({ customerOnly: true });
-      const candidates = customerModels.filter((model) => modelMatchesGeneration(model, body.generationType, rawInput));
+      const account = await findUser(currentUser.id);
+      const matchingModels = customerModels.filter((model) => modelMatchesGeneration(model, body.generationType, rawInput));
+      const candidates = matchingModels.filter((model) => (account?.balance ?? 0) >= modelPointCost(model));
+      if (matchingModels.length && !candidates.length) return sendJson(response, 402, { error: '积分不足，请先充值积分' });
       const job = await submitJobWithFallback(currentUser, candidates, rawInput);
       return sendJson(response, job.status === 'failed' ? 500 : 202, job);
     }

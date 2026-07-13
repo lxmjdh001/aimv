@@ -7,6 +7,18 @@ const dataDir = path.join(process.cwd(), 'data');
 const dbPath = path.join(dataDir, 'ai-mv.sqlite');
 let db;
 
+function withDbTransaction(callback) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const result = callback();
+    db.exec('COMMIT');
+    return result;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
 const defaultAdmin = {
   email: 'admin@7c.local',
   password: '7cadmin123',
@@ -221,6 +233,8 @@ function jobToRow(job) {
     remote_job_json: JSON.stringify(job.remoteJob ?? null),
     remote_status_json: JSON.stringify(job.remoteStatus ?? null),
     outputs_json: JSON.stringify(job.outputs ?? null),
+    cost_amount: job.costAmount ?? job.cost?.amount ?? null,
+    charged_at: job.chargedAt ?? null,
     error: job.error ?? '',
     created_at: job.createdAt,
     updated_at: job.updatedAt
@@ -257,13 +271,15 @@ function rowToJob(row) {
     outputs,
     usage,
     cost: {
-      amount: null,
+      amount: row.cost_amount == null ? null : Number(row.cost_amount),
       currency: 'CNY',
       tokens: usage?.total_tokens ?? null,
       imageCount: imageCount ?? null,
       duration: duration ?? null
     },
+    costAmount: row.cost_amount == null ? null : Number(row.cost_amount),
     error: row.error || undefined,
+    chargedAt: row.charged_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -291,7 +307,8 @@ function rowToUser(row) {
     role: row.role,
     enabled: Boolean(row.enabled),
     balance: Number(row.balance ?? 0),
-    monthlyUsed: Number(row.monthly_used ?? 0),
+    monthlyUsed: row.usage_month === new Date().toISOString().slice(0, 7) ? Number(row.monthly_used ?? 0) : 0,
+    usageMonth: row.usage_month ?? null,
     totalRecharged: Number(row.total_recharged ?? 0),
     lastLoginAt: row.last_login_at ?? null,
     createdAt: row.created_at,
@@ -344,6 +361,8 @@ export async function initDb() {
       remote_job_json TEXT,
       remote_status_json TEXT,
       outputs_json TEXT,
+      cost_amount REAL,
+      charged_at TEXT,
       error TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -358,6 +377,7 @@ export async function initDb() {
       enabled INTEGER NOT NULL DEFAULT 1,
       balance REAL NOT NULL DEFAULT 0,
       monthly_used REAL NOT NULL DEFAULT 0,
+      usage_month TEXT,
       total_recharged REAL NOT NULL DEFAULT 0,
       last_login_at TEXT,
       created_at TEXT NOT NULL,
@@ -370,6 +390,27 @@ export async function initDb() {
       expires_at TEXT NOT NULL,
       created_at TEXT NOT NULL,
       FOREIGN KEY(user_id) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS wallet_transactions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      type TEXT NOT NULL CHECK(type IN ('recharge', 'consume', 'refund', 'adjustment')),
+      amount REAL NOT NULL,
+      payment_amount REAL,
+      balance_before REAL NOT NULL,
+      balance_after REAL NOT NULL,
+      related_job_id TEXT,
+      operator_user_id TEXT,
+      note TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS system_settings (
+      setting_key TEXT PRIMARY KEY,
+      setting_value TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     );
   `);
 
@@ -396,7 +437,27 @@ export async function initDb() {
   }
 
   ensureJobsUserColumn();
+  ensureJobsBillingColumns();
   ensureUsersBillingColumns();
+  ensureWalletTransactionColumns();
+  ensureDefaultPointSettings();
+}
+
+function ensureWalletTransactionColumns() {
+  const columns = db.prepare('PRAGMA table_info(wallet_transactions)').all().map((column) => column.name);
+  if (!columns.includes('payment_amount')) db.prepare('ALTER TABLE wallet_transactions ADD COLUMN payment_amount REAL').run();
+}
+
+function ensureDefaultPointSettings() {
+  const existing = db.prepare('SELECT setting_key FROM system_settings WHERE setting_key = ?').get('points_per_cny');
+  if (!existing) db.prepare('INSERT INTO system_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)')
+    .run('points_per_cny', '100', new Date().toISOString());
+}
+
+function ensureJobsBillingColumns() {
+  const columns = db.prepare('PRAGMA table_info(jobs)').all().map((column) => column.name);
+  if (!columns.includes('cost_amount')) db.prepare('ALTER TABLE jobs ADD COLUMN cost_amount REAL').run();
+  if (!columns.includes('charged_at')) db.prepare('ALTER TABLE jobs ADD COLUMN charged_at TEXT').run();
 }
 
 function ensureJobsUserColumn() {
@@ -419,6 +480,7 @@ function ensureUsersBillingColumns() {
   };
   addColumn('balance', 'REAL NOT NULL DEFAULT 0');
   addColumn('monthly_used', 'REAL NOT NULL DEFAULT 0');
+  addColumn('usage_month', 'TEXT');
   addColumn('total_recharged', 'REAL NOT NULL DEFAULT 0');
   addColumn('last_login_at', 'TEXT');
 }
@@ -434,15 +496,16 @@ export function createDbUser({ email, password, name, role = 'customer', enabled
     enabled: enabled ? 1 : 0,
     balance: 0,
     monthlyUsed: 0,
+    usageMonth: new Date().toISOString().slice(0, 7),
     totalRecharged: 0,
     lastLoginAt: null,
     createdAt: now,
     updatedAt: now
   };
   db.prepare(`
-    INSERT INTO users (id, email, password_hash, name, role, enabled, balance, monthly_used, total_recharged, last_login_at, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(user.id, user.email, user.passwordHash, user.name, user.role, user.enabled, user.balance, user.monthlyUsed, user.totalRecharged, user.lastLoginAt, user.createdAt, user.updatedAt);
+    INSERT INTO users (id, email, password_hash, name, role, enabled, balance, monthly_used, usage_month, total_recharged, last_login_at, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(user.id, user.email, user.passwordHash, user.name, user.role, user.enabled, user.balance, user.monthlyUsed, user.usageMonth, user.totalRecharged, user.lastLoginAt, user.createdAt, user.updatedAt);
   return rowToUser(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id));
 }
 
@@ -465,6 +528,7 @@ export function updateDbUser(userId, patch) {
       enabled = ?,
       balance = ?,
       monthly_used = ?,
+      usage_month = ?,
       total_recharged = ?,
       last_login_at = ?,
       updated_at = ?
@@ -475,12 +539,106 @@ export function updateDbUser(userId, patch) {
     next.enabled ? 1 : 0,
     Number(next.balance ?? 0),
     Number(next.monthlyUsed ?? 0),
+    next.usageMonth ?? new Date().toISOString().slice(0, 7),
     Number(next.totalRecharged ?? 0),
     next.lastLoginAt ?? null,
     next.updatedAt,
     userId
   );
   return getDbUser(userId);
+}
+
+function rowToWalletTransaction(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    userId: row.user_id,
+    type: row.type,
+    amount: Number(row.amount),
+    paymentAmount: row.payment_amount == null ? null : Number(row.payment_amount),
+    balanceBefore: Number(row.balance_before),
+    balanceAfter: Number(row.balance_after),
+    relatedJobId: row.related_job_id ?? null,
+    operatorUserId: row.operator_user_id ?? null,
+    note: row.note ?? '',
+    createdAt: row.created_at
+  };
+}
+
+export function listDbWalletTransactions({ userId, limit = 100 } = {}) {
+  const params = [];
+  const where = userId ? 'WHERE user_id = ?' : '';
+  if (userId) params.push(userId);
+  params.push(Number(limit));
+  return db.prepare(`SELECT * FROM wallet_transactions ${where} ORDER BY created_at DESC LIMIT ?`)
+    .all(...params).map(rowToWalletTransaction);
+}
+
+export function getDbPointSettings() {
+  const row = db.prepare('SELECT setting_value FROM system_settings WHERE setting_key = ?').get('points_per_cny');
+  const pointsPerCny = Number(row?.setting_value ?? 100);
+  return { pointsPerCny: Number.isFinite(pointsPerCny) && pointsPerCny > 0 ? pointsPerCny : 100 };
+}
+
+export function saveDbPointSettings({ pointsPerCny }) {
+  const normalized = Math.round(Number(pointsPerCny) * 100) / 100;
+  if (!Number.isFinite(normalized) || normalized <= 0) throw new Error('积分兑换比例必须大于 0');
+  db.prepare(`INSERT INTO system_settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)
+    ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = excluded.updated_at`)
+    .run('points_per_cny', String(normalized), new Date().toISOString());
+  return getDbPointSettings();
+}
+
+export function rechargeDbUser(userId, amount, operatorUserId, note = '', paymentAmount = null) {
+  const normalizedAmount = Math.round(Number(amount) * 100) / 100;
+  if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) throw new Error('充值金额必须大于 0');
+  return withDbTransaction(() => {
+    const user = getDbUser(userId);
+    if (!user) return null;
+    const now = new Date().toISOString();
+    const balanceAfter = Math.round((user.balance + normalizedAmount) * 100) / 100;
+    db.prepare('UPDATE users SET balance = ?, total_recharged = total_recharged + ?, updated_at = ? WHERE id = ?')
+      .run(balanceAfter, normalizedAmount, now, userId);
+    const transaction = {
+      id: randomUUID(), userId, type: 'recharge', amount: normalizedAmount, paymentAmount,
+      balanceBefore: user.balance, balanceAfter, operatorUserId, note, createdAt: now
+    };
+    db.prepare(`INSERT INTO wallet_transactions
+      (id, user_id, type, amount, payment_amount, balance_before, balance_after, related_job_id, operator_user_id, note, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(transaction.id, userId, transaction.type, transaction.amount, paymentAmount, transaction.balanceBefore, transaction.balanceAfter, null, operatorUserId, note, now);
+    return { user: getDbUser(userId), transaction };
+  });
+}
+
+export function chargeDbJob(jobId, userId, amount, note = '') {
+  const normalizedAmount = Math.round(Number(amount) * 100) / 100;
+  if (!Number.isFinite(normalizedAmount) || normalizedAmount < 0) throw new Error('任务价格无效');
+  return withDbTransaction(() => {
+    const job = db.prepare('SELECT charged_at FROM jobs WHERE id = ? AND user_id = ?').get(jobId, userId);
+    if (!job) return { error: 'JOB_NOT_FOUND' };
+    if (job.charged_at) return { alreadyCharged: true, user: getDbUser(userId) };
+    const user = getDbUser(userId);
+    if (!user) return { error: 'USER_NOT_FOUND' };
+    if (user.balance < normalizedAmount) return { error: 'INSUFFICIENT_BALANCE', user };
+    const now = new Date().toISOString();
+    const usageMonth = now.slice(0, 7);
+    const monthlyUsed = user.usageMonth === usageMonth ? user.monthlyUsed + normalizedAmount : normalizedAmount;
+    const balanceAfter = Math.round((user.balance - normalizedAmount) * 100) / 100;
+    db.prepare('UPDATE users SET balance = ?, monthly_used = ?, usage_month = ?, updated_at = ? WHERE id = ?')
+      .run(balanceAfter, monthlyUsed, usageMonth, now, userId);
+    db.prepare('UPDATE jobs SET cost_amount = ?, charged_at = ?, updated_at = ? WHERE id = ?')
+      .run(normalizedAmount, now, now, jobId);
+    const transaction = {
+      id: randomUUID(), userId, type: 'consume', amount: -normalizedAmount,
+      balanceBefore: user.balance, balanceAfter, relatedJobId: jobId, note, createdAt: now
+    };
+    db.prepare(`INSERT INTO wallet_transactions
+      (id, user_id, type, amount, payment_amount, balance_before, balance_after, related_job_id, operator_user_id, note, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(transaction.id, userId, transaction.type, transaction.amount, null, transaction.balanceBefore, transaction.balanceAfter, jobId, null, note, now);
+    return { user: getDbUser(userId), transaction };
+  });
 }
 
 export function authenticateDbUser(email, password) {
@@ -618,8 +776,8 @@ export function upsertDbModel(model) {
 export function createDbJob(job) {
   const row = jobToRow(job);
   db.prepare(`
-    INSERT INTO jobs (id, user_id, provider_id, workflow_type, status, input_json, remote_job_json, remote_status_json, outputs_json, error, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO jobs (id, user_id, provider_id, workflow_type, status, input_json, remote_job_json, remote_status_json, outputs_json, cost_amount, charged_at, error, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     row.id,
     row.user_id,
@@ -630,6 +788,8 @@ export function createDbJob(job) {
     row.remote_job_json,
     row.remote_status_json,
     row.outputs_json,
+    row.cost_amount,
+    row.charged_at,
     row.error,
     row.created_at,
     row.updated_at
@@ -649,6 +809,8 @@ export function updateDbJob(job) {
       remote_job_json = ?,
       remote_status_json = ?,
       outputs_json = ?,
+      cost_amount = ?,
+      charged_at = ?,
       error = ?,
       updated_at = ?
     WHERE id = ?
@@ -660,6 +822,8 @@ export function updateDbJob(job) {
     row.remote_job_json,
     row.remote_status_json,
     row.outputs_json,
+    row.cost_amount,
+    row.charged_at,
     row.error,
     row.updated_at,
     row.id

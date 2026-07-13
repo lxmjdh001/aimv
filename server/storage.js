@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { createDbJob, createDbUser, getDbJob, getDbModel, getDbProvider, getDbUser, initDb, listDbJobs, listDbModels, listDbProviders, listDbUsers, updateDbJob, updateDbUser, upsertDbModel, upsertProvider } from './db.js';
+import { chargeDbJob, createDbJob, createDbUser, getDbJob, getDbModel, getDbPointSettings, getDbProvider, getDbUser, initDb, listDbJobs, listDbModels, listDbProviders, listDbUsers, listDbWalletTransactions, rechargeDbUser, saveDbPointSettings, updateDbJob, updateDbUser, upsertDbModel, upsertProvider } from './db.js';
 
 const rootDir = process.cwd();
 const configDir = path.join(rootDir, 'data', 'config');
@@ -67,6 +67,26 @@ export async function updateUser(userId, patch) {
 
 export async function createUser(payload) {
   return createDbUser(payload);
+}
+
+export async function listWalletTransactions(options) {
+  return listDbWalletTransactions(options);
+}
+
+export async function rechargeUser(userId, amount, operatorUserId, note, paymentAmount) {
+  return rechargeDbUser(userId, amount, operatorUserId, note, paymentAmount);
+}
+
+export async function chargeJob(jobId, userId, amount, note) {
+  return chargeDbJob(jobId, userId, amount, note);
+}
+
+export async function getPointSettings() {
+  return getDbPointSettings();
+}
+
+export async function savePointSettings(settings) {
+  return saveDbPointSettings(settings);
 }
 
 export async function createJob(payload) {
