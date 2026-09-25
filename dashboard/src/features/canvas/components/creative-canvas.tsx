@@ -18,6 +18,8 @@ import type {
 } from '@/lib/creative-types';
 import { jobToAssets } from '@/lib/creative-types';
 import {
+  generationModelCost,
+  longVideoDescription,
   generationRatioOptions,
   GenerationModel,
   GenerationType,
@@ -575,6 +577,11 @@ export default function CreativeCanvas({ projectId }: { projectId: string }) {
 
       <div className='pointer-events-none absolute inset-x-0 bottom-5 z-20 flex justify-center px-24 md:bottom-7'>
         <div className='pointer-events-auto w-[min(720px,calc(100vw-240px))] rounded-2xl border border-white/10 bg-[#292724]/95 p-2 shadow-2xl backdrop-blur-xl'>
+          {projectJobs.filter((job) => job.remoteJob?.kind === 'segmented-video' && ['submitted', 'running'].includes(job.status)).slice(-3).map((job) => (
+            <p key={job.id} className='px-2 pb-2 text-xs text-orange-300' role='status'>
+              {String(job.input?.duration)} 秒视频 · {job.remoteJob?.phase === 'composing' ? '正在合成视频' : `已生成 ${job.remoteJob?.segments?.filter((segment) => segment.status === 'succeeded').length || 0}/${job.remoteJob?.segments?.length} 段`} · 可稍后返回查看
+            </p>
+          ))}
           {referencePreview && (
             <div className='mb-2 flex items-center gap-2 rounded-xl bg-black/30 p-2 text-xs text-zinc-400'>
               <img src={referencePreview} alt='参考图' className='size-10 rounded-lg object-cover' />
@@ -626,6 +633,8 @@ export default function CreativeCanvas({ projectId }: { projectId: string }) {
             <div className='space-y-2'><Label>生成模型</Label><Select value={modelId} onValueChange={setModelId}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value='auto'>智能匹配模型</SelectItem>{compatibleModels.map((model) => <SelectItem key={model.id} value={model.id}>{model.displayName}</SelectItem>)}</SelectContent></Select></div>
             <div className='space-y-2'><Label>画面比例</Label><Select value={ratio} onValueChange={setRatio}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{generationRatioOptions.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select></div>
             {generationType === 'video' && <div className='space-y-2'><Label>视频时长</Label><Select value={duration} onValueChange={setDuration}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{videoDurationOptions.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select></div>}
+            {generationType === 'video' && Number(duration) > 15 && <p className='text-xs text-muted-foreground'>{longVideoDescription}</p>}
+            <p className='text-sm text-muted-foreground'>预计积分：{selectedModel ? generationModelCost(selectedModel, Number(duration)) : '按匹配模型计费'}</p>
             <Button className='w-full bg-orange-500 hover:bg-orange-400' onClick={() => setSettingsOpen(false)}>完成</Button>
           </div>
         </DialogContent>

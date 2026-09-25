@@ -94,6 +94,7 @@ export async function submitBailianTask(provider, workflowType, input) {
   const payload = buildPayload(workflowType, input);
   const response = await fetch(`${baseUrl}${VIDEO_ENDPOINT}`, {
     method: 'POST',
+    signal: AbortSignal.timeout(45_000),
     headers: {
       'Content-Type': 'application/json',
       'X-DashScope-Async': 'enable',
@@ -123,6 +124,7 @@ export async function pollBailianTask(provider, taskId) {
   if (!taskId) throw new Error('缺少阿里百炼 task_id');
   const baseUrl = trimTrailingSlash(provider.baseUrl ?? DEFAULT_BASE_URL);
   const response = await fetch(`${baseUrl}/tasks/${encodeURIComponent(taskId)}`, {
+    signal: AbortSignal.timeout(30_000),
     headers: {
       Authorization: `Bearer ${getApiKey(provider)}`
     }

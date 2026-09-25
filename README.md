@@ -317,3 +317,15 @@ http://127.0.0.1:3006/auth/sign-in
 - 账户设置
 
 说明：登录系统已从 Clerk 切换为 SQLite 自建 Session。模板里的 Clerk 演示依赖仍保留在未使用的演示页面和依赖包中，后续可做深度清理。
+
+### 视频时长与长视频合成
+
+首页、画布和素材生成页支持 5 / 10 / 15 / 20 / 30 / 60 秒。
+当前 HappyHorse 适配器单次支持最多 15 秒：20 秒拆成 2 × 10 秒、30 秒拆成 2 × 15 秒、60 秒拆成 4 × 15 秒，服务端统一编码后合成 MP4。
+每段保留原始创意和参考图，并添加镜头位置提示；这是多镜头合成，不保证人物或音频跨镜头无缝衔接。
+
+- API 主机需要 Node.js 22.5+、`ffmpeg`（含 libx264 / AAC）和 `ffprobe`。Debian / Ubuntu 可运行 `apt-get install ffmpeg`；Docker API 镜像也需安装 FFmpeg。
+- 单段沿用模型每次生成的积分价，长视频按分段数量计价，提交时固定报价、合成成功后扣一次积分。
+- 分段任务状态存入 SQLite，后台每 15 秒推进；关闭页面后继续处理。生成过程中重启可恢复已知任务，提交结果不明时标记失败以避免重复调用。
+- 临时转码文件位于 `data/outputs/.video-compose-*`，正常完成或出错后自动清理；生成结果与分段视频保存在 `data/outputs/`。
+- 验证：`node --test server/long-video.test.js server/long-video-api.test.js`。测试使用模拟模型接口和 FFmpeg 测试片段，不消耗真实模型额度。

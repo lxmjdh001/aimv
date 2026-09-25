@@ -47,6 +47,7 @@ export type CreativeJob = {
   error?: string;
   createdAt: string;
   updatedAt?: string;
+  remoteJob?: { kind?: string; phase?: string; segments?: { status: string; duration: number }[] };
 };
 
 export type CreativeAsset = {

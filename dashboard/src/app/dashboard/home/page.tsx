@@ -10,6 +10,7 @@ import { apiRequest } from '@/lib/api-client';
 import { CreativeAsset, CreativeJob, CreativeProject, jobToAssets } from '@/lib/creative-types';
 import {
   generationModelCost,
+  longVideoDescription,
   generationRatioOptions,
   GenerationModel,
   GenerationType,
@@ -274,14 +275,15 @@ export default function CreativeHomePage() {
             </Select>
             {generationType === 'video' && (
               <Select value={duration} onValueChange={setDuration}>
-                <SelectTrigger className='h-10 w-[106px] rounded-xl bg-black/15'><SelectValue /></SelectTrigger>
+                <SelectTrigger className='h-10 w-[180px] rounded-xl bg-black/15'><SelectValue /></SelectTrigger>
                 <SelectContent>{videoDurationOptions.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent>
               </Select>
             )}
-            <span className='ml-auto whitespace-nowrap px-1 text-xs text-muted-foreground'>⚡ {selectedModel ? generationModelCost(selectedModel) : '自动计费'} 积分</span>
+            <span className='ml-auto whitespace-nowrap px-1 text-xs text-muted-foreground'>⚡ {selectedModel ? generationModelCost(selectedModel, Number(duration)) : '按所选模型计费'} 积分</span>
             <button type='button' onClick={() => setComposerExpanded(false)} className='rounded-lg p-2 text-muted-foreground hover:bg-white/8 hover:text-white' aria-label='收起创作设置'><IconX className='size-4' /></button>
           </div>
         )}
+        {composerExpanded && generationType === 'video' && Number(duration) > 15 && <p className='text-xs text-muted-foreground'>{longVideoDescription}</p>}
         {composerError && <div className='text-xs text-red-400'>{composerError}</div>}
       </form>
     </PageContainer>

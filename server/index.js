@@ -11,6 +11,8 @@ import { checkWanxImageStatus, submitWanxImageTask } from './wanx-image.js';
 import { discoverConnectionModels, getModelConnectionPreset, listModelConnectionPresets } from './model-connections.js';
 import { buildTikTokAuthorizationUrl, createTikTokPreReview, createTikTokPreview, createTikTokSmartFix, decryptTikTokToken, encryptTikTokToken, exchangeTikTokAuthCode, getTikTokAdvertisers, getTikTokConfig, getTikTokPreReviewResult, getTikTokSmartFixResult, uploadTikTokMedia, verifyTikTokOAuthState } from './tiktok-business.js';
 import { generateMetaPreview, getMetaConnectionStatus, serializeMetaError, validateMetaCreative } from './meta-business.js';
+import { videoSegments, videoPointCost } from './video-duration.js';
+import { advanceLongVideo, checkVideoComposer, composeLongVideo, createLongVideoPlan } from './long-video.js';
 
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST ?? '127.0.0.1';
@@ -210,7 +212,7 @@ function extensionForAsset(url, contentType) {
 
 async function persistRemoteAsset(job, url, kind, index = 0) {
   if (!url || !String(url).startsWith('http')) return url;
-  const assetResponse = await fetch(url);
+  const assetResponse = await fetch(url, { signal: AbortSignal.timeout(120_000) });
   if (!assetResponse.ok) throw new Error(`素材保存失败：远程资源返回 ${assetResponse.status}`);
 
   await mkdir(outputsDir, { recursive: true });
@@ -407,12 +409,28 @@ async function checkProviderStatus(provider) {
 }
 
 async function submitProviderJob(provider, job) {
+  if (/ToVideo$/.test(job.workflowType) && Number(job.input.duration) > 15 && provider.platform !== 'aliyun-bailian') {
+    throw new Error('当前模型暂不支持分段长视频，请选择阿里百炼视频模型');
+  }
   if (provider.platform === 'comfyui') {
     const result = await submitComfyWorkflow(provider, job.workflowType, job.input);
     return { status: 'submitted', remoteJob: result };
   }
 
   if (provider.platform === 'aliyun-bailian') {
+    const segments = videoSegments(job.input.duration);
+    if (segments.length > 1) {
+      await checkVideoComposer();
+      job.remoteJob = createLongVideoPlan(job.input.duration);
+      job.status = 'running';
+      const initialTask = (async () => {
+        await updateJob(job);
+        return advanceLongVideo(job, provider, longVideoDependencies);
+      })();
+      refreshLocks.set(job.id, initialTask);
+      try { await initialTask; } finally { refreshLocks.delete(job.id); }
+      return { status: job.status, remoteJob: job.remoteJob, error: job.error };
+    }
     const result = await submitBailianTask(provider, job.workflowType, job.input);
     return { status: result.status, remoteJob: result };
   }
@@ -463,14 +481,13 @@ function applyModelToJob(job, provider, model, input) {
   job.input = input;
 }
 
-function modelPointCost(model) {
-  const pointCost = Number(model?.config?.pointCost ?? model?.config?.price ?? 0);
-  return Number.isFinite(pointCost) && pointCost >= 0 ? Math.round(pointCost * 100) / 100 : 0;
+function modelPointCost(model, input = {}) {
+  return videoPointCost(model, input);
 }
 
 async function chargeSucceededJob(job, model) {
   if (job.status !== 'succeeded' || job.chargedAt) return job;
-  const pointCost = modelPointCost(model ?? await findModel(job.input?.modelId));
+  const pointCost = job.remoteJob?.quotedPointCost ?? modelPointCost(model ?? await findModel(job.input?.modelId), job.input);
   const result = await chargeJob(job.id, job.userId, pointCost, `AI 生成任务 ${job.id}`);
   if (result?.error === 'INSUFFICIENT_BALANCE') {
     throw Object.assign(new Error('积分不足，请先充值积分'), { statusCode: 402 });
@@ -511,7 +528,7 @@ async function submitJobWithFallback(currentUser, models, rawInput) {
       const result = await submitProviderJob(provider, job);
       attempts.push({ modelId: model.id, modelName: model.displayName, providerId: provider.id, status: result.status });
       Object.assign(job, result);
-      job.remoteJob = { ...(job.remoteJob ?? {}), fallbackAttempts: attempts };
+      job.remoteJob = { ...(job.remoteJob ?? {}), quotedPointCost: modelPointCost(model, input), fallbackAttempts: attempts };
       await updateJob(job);
       return chargeSucceededJob(job, model);
     } catch (error) {
@@ -534,9 +551,35 @@ async function submitJobWithFallback(currentUser, models, rawInput) {
   throw Object.assign(new Error('当前类型暂无可用供应商'), { statusCode: 400 });
 }
 
-async function refreshJob(job) {
+const refreshLocks = new Map();
+const longVideoDependencies = {
+  submit: submitBailianTask,
+  poll: pollBailianTask,
+  persist: persistRemoteAsset,
+  save: updateJob,
+  compose: (job) => composeLongVideo(job, outputsDir)
+};
+
+function refreshJob(job) {
+  if (refreshLocks.has(job.id)) return refreshLocks.get(job.id);
+  const task = (async () => {
+    // Re-read after acquiring the lock so stale browser requests cannot rewind a job.
+    const current = await getJob(job.id, { userId: job.userId });
+    return refreshCurrentJob(current ?? job);
+  })().finally(() => refreshLocks.delete(job.id));
+  refreshLocks.set(job.id, task);
+  return task;
+}
+
+async function refreshCurrentJob(job) {
+  if (['succeeded', 'failed'].includes(job.status)) return chargeSucceededJob(job);
   const provider = await findProvider(job.providerId, { includeSecrets: true });
   if (!provider) throw new Error('Provider not found');
+
+  if (job.remoteJob?.kind === 'segmented-video') {
+    await advanceLongVideo(job, provider, longVideoDependencies);
+    return chargeSucceededJob(job);
+  }
 
   if (provider.platform !== 'aliyun-bailian') {
     return { ...job, refreshMessage: `Refresh is not implemented for ${provider.platform}` };
@@ -1204,6 +1247,11 @@ async function route(request, response) {
     if (!job) return sendJson(response, 404, { error: 'Job not found' });
 
     if (segments[4] === 'refresh') {
+      if (job.remoteJob?.kind === 'segmented-video') {
+        // Encoding can outlast a proxy timeout; return saved progress immediately.
+        refreshJob(job).catch((error) => console.error('Long video refresh:', job.id, error.message));
+        return sendJson(response, 200, job);
+      }
       return sendJson(response, 200, await refreshJob(job));
     }
 
@@ -1220,11 +1268,14 @@ async function route(request, response) {
     }
 
     const rawInput = { ...(body.input ?? {}) };
+    if (body.generationType === 'video' || selectedModel?.modality === 'video' || /ToVideo$/.test(body.workflowType ?? '')) {
+      videoSegments(rawInput.duration ?? selectedModel?.config?.duration ?? 5);
+    }
     if (rawInput.imageUrl) rawInput.imageUrl = toPublicUrl(request, rawInput.imageUrl);
 
     if (selectedModel) {
       const account = await findUser(currentUser.id);
-      if ((account?.balance ?? 0) < modelPointCost(selectedModel)) return sendJson(response, 402, { error: '积分不足，请先充值积分' });
+      if ((account?.balance ?? 0) < modelPointCost(selectedModel, rawInput)) return sendJson(response, 402, { error: '积分不足，请先充值积分' });
       const provider = await findProvider(selectedModel.providerId, { includeSecrets: true });
       if (!provider || !provider.enabled) return sendJson(response, 400, { error: 'Provider not found or disabled' });
       const job = await submitJobWithFallback(currentUser, [selectedModel], rawInput);
@@ -1235,7 +1286,7 @@ async function route(request, response) {
       const customerModels = await listModels({ customerOnly: true });
       const account = await findUser(currentUser.id);
       const matchingModels = customerModels.filter((model) => modelMatchesGeneration(model, body.generationType, rawInput));
-      const candidates = matchingModels.filter((model) => (account?.balance ?? 0) >= modelPointCost(model));
+      const candidates = matchingModels.filter((model) => (account?.balance ?? 0) >= modelPointCost(model, rawInput));
       if (matchingModels.length && !candidates.length) return sendJson(response, 402, { error: '积分不足，请先充值积分' });
       const job = await submitJobWithFallback(currentUser, candidates, rawInput);
       return sendJson(response, job.status === 'failed' ? 500 : 202, job);
@@ -1274,6 +1325,18 @@ async function route(request, response) {
 }
 
 await ensureDataDirs();
+// Resume multi-shot jobs after restart and keep progressing when the canvas is closed.
+const longVideoWorker = setInterval(async () => {
+  try {
+    const jobs = await listJobs({ limit: 1000, pendingOnly: true });
+    for (const job of jobs) {
+      if (job.remoteJob?.kind === 'segmented-video' && ['submitted', 'running'].includes(job.status)) {
+        refreshJob(job).catch((error) => console.error('Long video worker:', job.id, error.message));
+      }
+    }
+  } catch (error) { console.error('Long video worker:', error.message); }
+}, 15_000);
+longVideoWorker.unref();
 http.createServer((request, response) => {
   route(request, response).catch((error) => {
     sendJson(response, error.statusCode ?? 500, { error: error.message });

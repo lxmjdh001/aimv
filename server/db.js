@@ -1133,6 +1133,7 @@ export function listDbJobs(options = {}) {
     ownerFilter = 'WHERE jobs.user_id = ?';
     params.push(options.userId);
   }
+  if (options.pendingOnly) ownerFilter += `${ownerFilter ? ' AND' : 'WHERE'} jobs.status IN ('submitted', 'running')`;
   params.push(limit);
 
   return db.prepare(`

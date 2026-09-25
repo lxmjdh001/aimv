@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { apiRequest } from '@/lib/api-client';
+import { longVideoDescription, videoDurationOptions } from '@/lib/generation-options';
 import { useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
@@ -28,11 +29,6 @@ const ratioOptions = [
   { value: '3:2', label: '3:2 摄影横图', wanxSize: '2048*1365', openaiSize: '1536x1024', videoRatio: '16:9' },
   { value: '4:3', label: '4:3 展示图', wanxSize: '2048*1536', openaiSize: '1365x1024', videoRatio: '4:3' },
   { value: '5:4', label: '5:4 商品图', wanxSize: '2048*1638', openaiSize: '1280x1024', videoRatio: '4:3' }
-];
-
-const videoDurationOptions = [
-  { value: '5', label: '5 秒' },
-  { value: '10', label: '10 秒' }
 ];
 
 const progressSteps = [
@@ -180,8 +176,9 @@ export default function GeneratePage() {
         method: 'POST',
         body: JSON.stringify(payload)
       });
-      setProgress(result.status === 'submitted' ? 76 : 100);
-      setProgressMessage(result.status === 'submitted' ? getProgressStep(76) : { label: '生成完成', description: '结果已同步完成。', min: 100 });
+      const pending = ['created', 'submitted', 'running'].includes(result.status);
+      setProgress(pending ? 20 : 100);
+      setProgressMessage(pending ? getProgressStep(20) : { label: '生成完成', description: '结果已同步完成。', min: 100 });
       setJob(result);
     } catch (err) {
       setProgress(100);
@@ -206,6 +203,12 @@ export default function GeneratePage() {
       const failed = result.status === 'failed';
       setProgress(done || failed ? 100 : Math.max(progress, 88));
       setProgressMessage(done ? { label: '生成完成', description: '结果已同步完成。', min: 100 } : failed ? { label: '生成失败', description: '模型服务返回失败，请查看错误信息。', min: 100 } : getProgressStep(88));
+      if (!done && !failed && result.remoteJob?.kind === 'segmented-video') {
+        const segments = result.remoteJob.segments as { status: string }[];
+        const completed = segments.filter((segment) => segment.status === 'succeeded').length;
+        setProgress(Math.round(completed / segments.length * 90));
+        setProgressMessage({ min: 0, label: result.remoteJob.phase === 'composing' ? '正在合成视频' : `已生成 ${completed}/${segments.length} 段`, description: '任务在后台继续运行，可稍后返回素材库查看。' });
+      }
       setJob(result);
     } catch (error) {
       if (options.manual) {
@@ -367,6 +370,7 @@ export default function GeneratePage() {
                             ))}
                           </SelectContent>
                         </Select>
+                        {Number(videoDuration) > 15 && <p className='text-xs text-muted-foreground'>{longVideoDescription}</p>}
                       </div>
 
                       <div className='space-y-2'>
