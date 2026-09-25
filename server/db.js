@@ -72,6 +72,66 @@ const defaultProviders = [
     apiKeyEnv: 'DASHSCOPE_API_KEY',
     models: { textToImage: 'wan2.7-image-pro', fastTextToImage: 'wan2.7-image' },
     settings: { size: '2K', n: 1, watermark: false, thinkingMode: true }
+  },
+  {
+    id: 'aliyun-intl-bailian',
+    name: 'Alibaba Model Studio International / Video',
+    platform: 'aliyun-bailian',
+    enabled: true,
+    region: 'ap-southeast-1',
+    baseUrl: 'https://dashscope-intl.aliyuncs.com/api/v1',
+    apiKey: '',
+    apiKeyEnv: 'DASHSCOPE_INTL_API_KEY',
+    models: { textToVideo: 'wan2.6-t2v', imageToVideo: 'wan2.6-i2v' },
+    settings: { resolution: '720P', ratio: '9:16', duration: 5, watermark: false }
+  },
+  {
+    id: 'aliyun-intl-wanx-image',
+    name: 'Alibaba Model Studio International / Image',
+    platform: 'aliyun-wanx-image',
+    enabled: true,
+    region: 'ap-southeast-1',
+    baseUrl: 'https://dashscope-intl.aliyuncs.com/api/v1',
+    apiKey: '',
+    apiKeyEnv: 'DASHSCOPE_INTL_API_KEY',
+    models: { textToImage: 'wan2.6-t2i', fastTextToImage: 'wan2.5-t2i-preview' },
+    settings: { size: '1440*1440', n: 1, watermark: false }
+  },
+  {
+    id: 'anthropic',
+    name: 'Anthropic Claude',
+    platform: 'anthropic',
+    enabled: true,
+    region: 'global',
+    baseUrl: 'https://api.anthropic.com/v1',
+    apiKey: '',
+    apiKeyEnv: 'ANTHROPIC_API_KEY',
+    models: { textGeneration: 'claude-sonnet-5' },
+    settings: {}
+  },
+  {
+    id: 'google-gemini',
+    name: 'Google Gemini',
+    platform: 'google-gemini',
+    enabled: true,
+    region: 'global',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    apiKey: '',
+    apiKeyEnv: 'GEMINI_API_KEY',
+    models: { textGeneration: 'gemini-3.8-flash' },
+    settings: {}
+  },
+  {
+    id: 'xai',
+    name: 'xAI Grok',
+    platform: 'openai-compatible',
+    enabled: true,
+    region: 'global',
+    baseUrl: 'https://api.x.ai/v1',
+    apiKey: '',
+    apiKeyEnv: 'XAI_API_KEY',
+    models: { textGeneration: 'grok-4.6' },
+    settings: {}
   }
 ];
 
@@ -316,6 +376,26 @@ function rowToUser(row) {
   };
 }
 
+function rowToCreativeProject(row) {
+  if (!row) return null;
+  let canvas = { version: 1, elements: [], viewport: { x: 0, y: 0, scale: 1 } };
+  try {
+    const parsed = JSON.parse(row.canvas_json || 'null');
+    if (parsed && typeof parsed === 'object') canvas = parsed;
+  } catch {
+    // Keep the default canvas for legacy or malformed rows.
+  }
+  return {
+    id: row.id,
+    userId: row.user_id,
+    title: row.title,
+    coverUrl: row.cover_url ?? '',
+    canvas,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
 export async function initDb() {
   await mkdir(dataDir, { recursive: true });
   db = new DatabaseSync(dbPath);
@@ -384,6 +464,17 @@ export async function initDb() {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS creative_projects (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      cover_url TEXT,
+      canvas_json TEXT NOT NULL DEFAULT '{"version":1,"elements":[],"viewport":{"x":0,"y":0,"scale":1}}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES users(id)
+    );
+
     CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -412,6 +503,23 @@ export async function initDb() {
       setting_value TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS platform_connections (
+      user_id TEXT NOT NULL,
+      platform TEXT NOT NULL,
+      access_token_encrypted TEXT NOT NULL,
+      refresh_token_encrypted TEXT,
+      token_expires_at TEXT,
+      refresh_expires_at TEXT,
+      scopes_json TEXT NOT NULL DEFAULT '[]',
+      selected_account_id TEXT,
+      accounts_json TEXT NOT NULL DEFAULT '[]',
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(user_id, platform),
+      FOREIGN KEY(user_id) REFERENCES users(id)
+    );
   `);
 
   for (const provider of defaultProviders) {
@@ -424,6 +532,13 @@ export async function initDb() {
   if (bailianProvider?.api_key && !wanxProvider?.api_key) {
     db.prepare('UPDATE providers SET api_key = ?, updated_at = ? WHERE id = ?')
       .run(bailianProvider.api_key, new Date().toISOString(), 'aliyun-wanx-image');
+  }
+
+  const intlBailianProvider = db.prepare('SELECT api_key FROM providers WHERE id = ?').get('aliyun-intl-bailian');
+  const intlWanxProvider = db.prepare('SELECT api_key FROM providers WHERE id = ?').get('aliyun-intl-wanx-image');
+  if (intlBailianProvider?.api_key && !intlWanxProvider?.api_key) {
+    db.prepare('UPDATE providers SET api_key = ?, updated_at = ? WHERE id = ?')
+      .run(intlBailianProvider.api_key, new Date().toISOString(), 'aliyun-intl-wanx-image');
   }
 
   for (const model of defaultModelCatalog) {
@@ -440,7 +555,15 @@ export async function initDb() {
   ensureJobsBillingColumns();
   ensureUsersBillingColumns();
   ensureWalletTransactionColumns();
+  ensureCreativeProjectColumns();
   ensureDefaultPointSettings();
+}
+
+function ensureCreativeProjectColumns() {
+  const columns = db.prepare('PRAGMA table_info(creative_projects)').all().map((column) => column.name);
+  if (!columns.includes('canvas_json')) {
+    db.prepare(`ALTER TABLE creative_projects ADD COLUMN canvas_json TEXT NOT NULL DEFAULT '{"version":1,"elements":[],"viewport":{"x":0,"y":0,"scale":1}}'`).run();
+  }
 }
 
 function ensureWalletTransactionColumns() {
@@ -518,11 +641,22 @@ export function getDbUser(userId) {
 }
 
 export function updateDbUser(userId, patch) {
-  const existing = getDbUser(userId);
-  if (!existing) return null;
-  const next = { ...existing, ...patch, updatedAt: new Date().toISOString() };
+  const existingRow = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+  if (!existingRow) return null;
+  const existing = rowToUser(existingRow);
+  const next = {
+    ...existing,
+    ...patch,
+    email: patch.email === undefined ? existing.email : String(patch.email).trim().toLowerCase(),
+    name: patch.name === undefined ? existing.name : String(patch.name).trim(),
+    updatedAt: new Date().toISOString()
+  };
+  const password = String(patch.password ?? '');
+  const passwordHash = password ? hashPassword(password) : existingRow.password_hash;
   db.prepare(`
     UPDATE users SET
+      email = ?,
+      password_hash = ?,
       name = ?,
       role = ?,
       enabled = ?,
@@ -534,6 +668,8 @@ export function updateDbUser(userId, patch) {
       updated_at = ?
     WHERE id = ?
   `).run(
+    next.email,
+    passwordHash,
     next.name,
     next.role,
     next.enabled ? 1 : 0,
@@ -545,6 +681,7 @@ export function updateDbUser(userId, patch) {
     next.updatedAt,
     userId
   );
+  if (password) db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
   return getDbUser(userId);
 }
 
@@ -673,14 +810,154 @@ export function deleteDbSession(token) {
   db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
 }
 
+export function listDbCreativeProjects({ userId }) {
+  return db.prepare(`
+    SELECT * FROM creative_projects
+    WHERE user_id = ?
+    ORDER BY updated_at DESC, created_at DESC
+  `).all(userId).map(rowToCreativeProject);
+}
+
+export function getDbCreativeProject(projectId, { userId } = {}) {
+  const params = [projectId];
+  const ownerFilter = userId ? ' AND user_id = ?' : '';
+  if (userId) params.push(userId);
+  return rowToCreativeProject(db.prepare(`
+    SELECT * FROM creative_projects WHERE id = ?${ownerFilter}
+  `).get(...params));
+}
+
+export function createDbCreativeProject({ userId, title = '未命名项目' }) {
+  const now = new Date().toISOString();
+  const project = {
+    id: randomUUID(),
+    userId,
+    title: String(title || '未命名项目').trim().slice(0, 80) || '未命名项目',
+    coverUrl: '',
+    canvas: { version: 1, elements: [], viewport: { x: 0, y: 0, scale: 1 } },
+    createdAt: now,
+    updatedAt: now
+  };
+  db.prepare(`
+    INSERT INTO creative_projects (id, user_id, title, cover_url, canvas_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(project.id, project.userId, project.title, project.coverUrl, JSON.stringify(project.canvas), project.createdAt, project.updatedAt);
+  return project;
+}
+
+export function updateDbCreativeProject(projectId, userId, patch) {
+  const existing = getDbCreativeProject(projectId, { userId });
+  if (!existing) return null;
+  const title = patch.title === undefined
+    ? existing.title
+    : String(patch.title || '未命名项目').trim().slice(0, 80) || '未命名项目';
+  const coverUrl = patch.coverUrl === undefined ? existing.coverUrl : String(patch.coverUrl || '');
+  const canvas = patch.canvas === undefined ? existing.canvas : normalizeCanvasState(patch.canvas);
+  const updatedAt = new Date().toISOString();
+  db.prepare(`
+    UPDATE creative_projects SET title = ?, cover_url = ?, canvas_json = ?, updated_at = ?
+    WHERE id = ? AND user_id = ?
+  `).run(title, coverUrl, JSON.stringify(canvas), updatedAt, projectId, userId);
+  return getDbCreativeProject(projectId, { userId });
+}
+
+function normalizeCanvasState(value) {
+  if (!value || typeof value !== 'object') return { version: 1, elements: [], viewport: { x: 0, y: 0, scale: 1 } };
+  const elements = Array.isArray(value.elements) ? value.elements.slice(0, 500) : [];
+  const rawViewport = value.viewport && typeof value.viewport === 'object' ? value.viewport : {};
+  const numeric = (candidate, fallback) => Number.isFinite(Number(candidate)) ? Number(candidate) : fallback;
+  return {
+    version: 1,
+    elements,
+    viewport: {
+      x: numeric(rawViewport.x, 0),
+      y: numeric(rawViewport.y, 0),
+      scale: Math.min(4, Math.max(0.1, numeric(rawViewport.scale, 1)))
+    }
+  };
+}
+
+export function deleteDbCreativeProject(projectId, userId) {
+  const result = db.prepare('DELETE FROM creative_projects WHERE id = ? AND user_id = ?').run(projectId, userId);
+  return result.changes > 0;
+}
+
+function rowToPlatformConnection(row, { includeSecrets = false } = {}) {
+  if (!row) return null;
+  const connection = {
+    userId: row.user_id,
+    platform: row.platform,
+    tokenExpiresAt: row.token_expires_at ?? null,
+    refreshExpiresAt: row.refresh_expires_at ?? null,
+    scopes: JSON.parse(row.scopes_json || '[]'),
+    selectedAccountId: row.selected_account_id ?? '',
+    accounts: JSON.parse(row.accounts_json || '[]'),
+    metadata: JSON.parse(row.metadata_json || '{}'),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+  if (includeSecrets) {
+    connection.accessTokenEncrypted = row.access_token_encrypted;
+    connection.refreshTokenEncrypted = row.refresh_token_encrypted ?? '';
+  }
+  return connection;
+}
+
+export function getDbPlatformConnection(userId, platform, options = {}) {
+  return rowToPlatformConnection(
+    db.prepare('SELECT * FROM platform_connections WHERE user_id = ? AND platform = ?').get(userId, platform),
+    options
+  );
+}
+
+export function upsertDbPlatformConnection(connection) {
+  const existing = getDbPlatformConnection(connection.userId, connection.platform, { includeSecrets: true });
+  const now = new Date().toISOString();
+  const next = { ...existing, ...connection };
+  db.prepare(`
+    INSERT INTO platform_connections
+      (user_id, platform, access_token_encrypted, refresh_token_encrypted, token_expires_at, refresh_expires_at, scopes_json, selected_account_id, accounts_json, metadata_json, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id, platform) DO UPDATE SET
+      access_token_encrypted = excluded.access_token_encrypted,
+      refresh_token_encrypted = excluded.refresh_token_encrypted,
+      token_expires_at = excluded.token_expires_at,
+      refresh_expires_at = excluded.refresh_expires_at,
+      scopes_json = excluded.scopes_json,
+      selected_account_id = excluded.selected_account_id,
+      accounts_json = excluded.accounts_json,
+      metadata_json = excluded.metadata_json,
+      updated_at = excluded.updated_at
+  `).run(
+    next.userId,
+    next.platform,
+    next.accessTokenEncrypted,
+    next.refreshTokenEncrypted || null,
+    next.tokenExpiresAt || null,
+    next.refreshExpiresAt || null,
+    JSON.stringify(next.scopes || []),
+    next.selectedAccountId || null,
+    JSON.stringify(next.accounts || []),
+    JSON.stringify(next.metadata || {}),
+    existing?.createdAt || now,
+    now
+  );
+  return getDbPlatformConnection(next.userId, next.platform);
+}
+
+export function deleteDbPlatformConnection(userId, platform) {
+  return db.prepare('DELETE FROM platform_connections WHERE user_id = ? AND platform = ?').run(userId, platform).changes > 0;
+}
+
 function maskApiKey(apiKey) {
   if (!apiKey) return '';
-  if (apiKey.length <= 8) return '*'.repeat(apiKey.length);
-  return `${apiKey.slice(0, -8)}********`;
+  if (apiKey.length <= 8) return '********';
+  const prefix = apiKey.includes('-') ? `${apiKey.split('-')[0]}-` : apiKey.slice(0, 2);
+  return `${prefix}****${apiKey.slice(-4)}`;
 }
 
 function isMaskedApiKey(apiKey) {
-  return typeof apiKey === 'string' && /^\*+$/.test(apiKey.slice(-8));
+  return typeof apiKey === 'string' && apiKey.includes('****');
 }
 
 export function listDbProviders({ includeSecrets = false } = {}) {

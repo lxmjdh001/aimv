@@ -16,8 +16,8 @@ const META_THEME_COLORS = {
 };
 
 export const metadata: Metadata = {
-  title: 'Next Shadcn',
-  description: 'Basic dashboard with Next.js and Shadcn'
+  title: 'AI MV 创意工作台',
+  description: '面向跨境广告的 AI 素材生成与投前检测平台'
 };
 
 export const viewport: Viewport = {

@@ -1,16 +1,13 @@
 import KBar from '@/components/kbar';
 import AppSidebar from '@/components/layout/app-sidebar';
 import Header from '@/components/layout/header';
-import { InfoSidebar } from '@/components/layout/info-sidebar';
-import { InfobarProvider } from '@/components/ui/infobar';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { AuthGate } from '@/lib/auth-client';
 import type { Metadata } from 'next';
-import { cookies } from 'next/headers';
 
 export const metadata: Metadata = {
-  title: 'Next Shadcn Dashboard Starter',
-  description: 'Basic dashboard with Next.js and Shadcn',
+  title: 'AI MV 创意工作台',
+  description: '广告图片、视频与投前检测工作台',
   robots: {
     index: false,
     follow: false
@@ -18,20 +15,18 @@ export const metadata: Metadata = {
 };
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  // Persisting the sidebar state in the cookie.
-  const cookieStore = await cookies();
-  const defaultOpen = cookieStore.get('sidebar_state')?.value === 'true';
   return (
     <AuthGate>
       <KBar>
-        <SidebarProvider defaultOpen={defaultOpen}>
+        <SidebarProvider
+          defaultOpen
+          className='creative-shell dark'
+          style={{ '--sidebar-width': '17.5rem' } as React.CSSProperties}
+        >
           <AppSidebar />
           <SidebarInset>
             <Header />
-            <InfobarProvider defaultOpen={false}>
-              {children}
-              <InfoSidebar side='right' />
-            </InfobarProvider>
+            {children}
           </SidebarInset>
         </SidebarProvider>
       </KBar>

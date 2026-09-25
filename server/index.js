@@ -3,11 +3,14 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { clearSessionCookie, getRequestUser, loginUser, logoutRequest, sessionCookie } from './auth.js';
-import { chargeJob, createJob, createUser, ensureDataDirs, findModel, findProvider, findUser, getJob, getPointSettings, listJobs, listModels, listProviders, listUsers, listWalletTransactions, rechargeUser, saveModel, savePointSettings, saveProvider, saveProviders, updateJob, updateUser } from './storage.js';
+import { chargeJob, createCreativeProject, createJob, createUser, deleteCreativeProject, ensureDataDirs, findCreativeProject, findModel, findPlatformConnection, findProvider, findUser, getJob, getPointSettings, listCreativeProjects, listJobs, listModels, listProviders, listUsers, listWalletTransactions, rechargeUser, removePlatformConnection, saveModel, savePlatformConnection, savePointSettings, saveProvider, saveProviders, updateCreativeProject, updateJob, updateUser } from './storage.js';
 import { checkBailianStatus, pollBailianTask, submitBailianTask } from './bailian.js';
 import { checkComfyStatus, submitComfyWorkflow } from './comfyui.js';
 import { checkOpenAIImageStatus, submitOpenAIImageTask } from './openai-image.js';
 import { checkWanxImageStatus, submitWanxImageTask } from './wanx-image.js';
+import { discoverConnectionModels, getModelConnectionPreset, listModelConnectionPresets } from './model-connections.js';
+import { buildTikTokAuthorizationUrl, createTikTokPreReview, createTikTokPreview, createTikTokSmartFix, decryptTikTokToken, encryptTikTokToken, exchangeTikTokAuthCode, getTikTokAdvertisers, getTikTokConfig, getTikTokPreReviewResult, getTikTokSmartFixResult, uploadTikTokMedia, verifyTikTokOAuthState } from './tiktok-business.js';
+import { generateMetaPreview, getMetaConnectionStatus, serializeMetaError, validateMetaCreative } from './meta-business.js';
 
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST ?? '127.0.0.1';
@@ -123,11 +126,52 @@ function normalizeRegisterInput(body) {
   return { email, password };
 }
 
-function readBody(request) {
+function normalizeAdminUserPatch(body) {
+  const patch = {};
+  if (Object.hasOwn(body, 'email')) {
+    const email = String(body.email || '').trim().toLowerCase();
+    if (!/^\S+@\S+\.\S+$/.test(email)) throw Object.assign(new Error('请输入有效邮箱'), { statusCode: 400 });
+    patch.email = email;
+  }
+  if (Object.hasOwn(body, 'name')) {
+    const name = String(body.name || '').trim();
+    if (!name) throw Object.assign(new Error('用户姓名不能为空'), { statusCode: 400 });
+    if (name.length > 80) throw Object.assign(new Error('用户姓名不能超过 80 个字符'), { statusCode: 400 });
+    patch.name = name;
+  }
+  if (Object.hasOwn(body, 'role')) {
+    if (!['admin', 'customer'].includes(body.role)) throw Object.assign(new Error('用户角色无效'), { statusCode: 400 });
+    patch.role = body.role;
+  }
+  if (Object.hasOwn(body, 'enabled')) {
+    if (typeof body.enabled !== 'boolean') throw Object.assign(new Error('用户状态无效'), { statusCode: 400 });
+    patch.enabled = body.enabled;
+  }
+  if (Object.hasOwn(body, 'password') && String(body.password || '')) {
+    const password = String(body.password);
+    if (password.length < 8) throw Object.assign(new Error('密码至少 8 位'), { statusCode: 400 });
+    if (password.length > 128) throw Object.assign(new Error('密码不能超过 128 位'), { statusCode: 400 });
+    patch.password = password;
+  }
+  return patch;
+}
+
+function readBody(request, { maxBytes = Infinity } = {}) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    request.on('data', (chunk) => chunks.push(chunk));
+    let totalBytes = 0;
+    let rejected = false;
+    request.on('data', (chunk) => {
+      totalBytes += chunk.length;
+      if (totalBytes > maxBytes) {
+        if (!rejected) reject(Object.assign(new Error('请求内容过大'), { statusCode: 413 }));
+        rejected = true;
+        return;
+      }
+      chunks.push(chunk);
+    });
     request.on('end', () => {
+      if (rejected) return;
       const text = Buffer.concat(chunks).toString('utf8');
       if (!text) return resolve({});
       try {
@@ -193,7 +237,11 @@ function extensionForMime(mimeType) {
   if (normalized === 'image/png') return 'png';
   if (normalized === 'image/webp') return 'webp';
   if (normalized === 'image/bmp') return 'bmp';
-  throw Object.assign(new Error('仅支持 JPG、PNG、WEBP、BMP 图片'), { statusCode: 400 });
+  if (normalized === 'video/mp4') return 'mp4';
+  if (normalized === 'video/webm') return 'webm';
+  if (normalized === 'video/quicktime') return 'mov';
+  if (normalized === 'video/mpeg') return 'mpeg';
+  throw Object.assign(new Error('仅支持 JPG、PNG、WEBP、BMP、MP4、MOV、MPEG 或 WEBM 文件'), { statusCode: 400 });
 }
 
 function decodeDataUrl(dataUrl) {
@@ -226,10 +274,34 @@ async function saveUploadedImage(request, response) {
   });
 }
 
+async function saveUploadedMedia(request, response) {
+  const currentUser = requireLogin(request, response);
+  if (!currentUser) return;
+
+  const body = await readBody(request, { maxBytes: 70 * 1024 * 1024 });
+  const { mimeType, buffer } = decodeDataUrl(body.dataUrl);
+  if (buffer.length > 50 * 1024 * 1024) return sendJson(response, 400, { error: '官方检测临时素材不能超过 50MB；大文件请先压缩' });
+
+  const extension = extensionForMime(mimeType);
+  await mkdir(uploadsDir, { recursive: true });
+  const filename = `${currentUser.id}-preflight-${randomUUID()}.${extension}`;
+  await writeFile(path.join(uploadsDir, filename), buffer);
+  const url = `/uploads/${filename}`;
+  return sendJson(response, 201, {
+    ok: true,
+    url,
+    publicUrl: toPublicUrl(request, url),
+    mimeType,
+    size: buffer.length,
+    originalName: String(body.fileName || filename).slice(0, 120)
+  });
+}
+
 function contentTypeFor(filePath) {
   if (filePath.endsWith('.mp4')) return 'video/mp4';
   if (filePath.endsWith('.webm')) return 'video/webm';
   if (filePath.endsWith('.mov')) return 'video/quicktime';
+  if (filePath.endsWith('.mpeg')) return 'video/mpeg';
   if (filePath.endsWith('.css')) return 'text/css';
   if (filePath.endsWith('.js')) return 'application/javascript';
   if (filePath.endsWith('.png')) return 'image/png';
@@ -484,6 +556,205 @@ async function refreshJob(job) {
   return chargeSucceededJob(job);
 }
 
+function tikTokConnectionView(connection, requestOrigin) {
+  const config = getTikTokConfig(requestOrigin);
+  return {
+    configured: config.configured,
+    redirectUri: config.redirectUri,
+    connected: Boolean(connection),
+    selectedAdvertiserId: connection?.selectedAccountId || '',
+    advertisers: connection?.accounts || [],
+    scopes: connection?.scopes || [],
+    connectedAt: connection?.createdAt || null,
+    updatedAt: connection?.updatedAt || null
+  };
+}
+
+async function requireTikTokConnection(userId) {
+  const connection = await findPlatformConnection(userId, 'tiktok', { includeSecrets: true });
+  if (!connection) throw Object.assign(new Error('请先授权连接 TikTok Ads'), { statusCode: 409 });
+  if (!connection.selectedAccountId) throw Object.assign(new Error('请选择 TikTok 广告账户'), { statusCode: 409 });
+  return { connection, accessToken: decryptTikTokToken(connection.accessTokenEncrypted) };
+}
+
+function futureIso(seconds) {
+  const value = Number(seconds);
+  return Number.isFinite(value) && value > 0 ? new Date(Date.now() + value * 1000).toISOString() : null;
+}
+
+function normalizeTikTokPreflightInput(body) {
+  const locationCode = String(body.locationCode || 'US').trim().toUpperCase();
+  const adText = String(body.adText || '').trim();
+  const landingPage = String(body.landingPage || '').trim();
+  const brandName = String(body.brandName || 'WzzAds').trim();
+  const mediaUrl = String(body.mediaUrl || '').trim();
+  const mediaType = body.mediaType === 'video' ? 'video' : body.mediaType === 'image' ? 'image' : '';
+  if (!/^[A-Z]{2}$/.test(locationCode)) throw Object.assign(new Error('目标地区代码格式不正确'), { statusCode: 400 });
+  if (landingPage && !/^https:\/\//i.test(landingPage)) throw Object.assign(new Error('官方预审要求落地页使用 HTTPS'), { statusCode: 400 });
+  if (mediaUrl && !/^https:\/\//i.test(mediaUrl)) throw Object.assign(new Error('TikTok 素材抓取地址必须使用 HTTPS'), { statusCode: 400 });
+  if (mediaUrl && !mediaType) throw Object.assign(new Error('请指定素材类型'), { statusCode: 400 });
+  if (!mediaUrl && !adText && !landingPage) throw Object.assign(new Error('请至少提供素材、广告文案或落地页'), { statusCode: 400 });
+  if (adText && [...adText].length > 100) throw Object.assign(new Error('TikTok 官方预审的广告文案不能超过 100 个字符'), { statusCode: 400 });
+  if (brandName.length > 40) throw Object.assign(new Error('品牌名称不能超过 40 个字符'), { statusCode: 400 });
+  return {
+    locationCode,
+    adText,
+    landingPage,
+    brandName: brandName || 'WzzAds',
+    mediaUrl,
+    mediaType,
+    fileName: String(body.fileName || '').trim(),
+    isEcommerce: Boolean(body.isEcommerce)
+  };
+}
+
+async function runTikTokOfficialPreflight(userId, body) {
+  const { connection, accessToken } = await requireTikTokConnection(userId);
+  const advertiserId = connection.selectedAccountId;
+  const input = { ...normalizeTikTokPreflightInput(body), advertiserId };
+  let upload = null;
+  let materialId = '';
+  let preReviewTaskId = '';
+  let fixTaskId = '';
+  let flawTypes = [];
+
+  if (input.mediaUrl) {
+    const uploadResponse = await uploadTikTokMedia(accessToken, input);
+    const uploadData = Array.isArray(uploadResponse.data) ? uploadResponse.data[0] || {} : uploadResponse.data || {};
+    materialId = String(input.mediaType === 'video' ? uploadData.video_id || '' : uploadData.image_id || '');
+    preReviewTaskId = String(uploadData.pre_review_task_id || '');
+    fixTaskId = String(uploadData.fix_task_id || '');
+    flawTypes = Array.isArray(uploadData.flaw_types) ? uploadData.flaw_types : [];
+    upload = {
+      materialId,
+      materialType: input.mediaType,
+      previewUrl: uploadData.preview_url || uploadData.image_url || '',
+      width: uploadData.width || null,
+      height: uploadData.height || null,
+      duration: uploadData.duration || null,
+      requestId: uploadResponse.request_id || ''
+    };
+  }
+
+  if (!preReviewTaskId) {
+    const preReviewResponse = await createTikTokPreReview(accessToken, { ...input, materialId });
+    preReviewTaskId = String(preReviewResponse.data?.pre_review_task_id || '');
+  }
+
+  let preview = null;
+  if (materialId && input.adText) {
+    try {
+      const previewResponse = await createTikTokPreview(accessToken, { ...input, materialId });
+      preview = {
+        url: previewResponse.data?.preview_link || '',
+        iframe: previewResponse.data?.iframe || '',
+        tips: previewResponse.data?.tips || [],
+        requestId: previewResponse.request_id || ''
+      };
+    } catch (error) {
+      preview = { error: error.message, url: '', tips: [] };
+    }
+  }
+
+  return {
+    advertiserId,
+    upload,
+    preReview: { taskId: preReviewTaskId, status: preReviewTaskId ? 'PROCESSING' : 'UNAVAILABLE' },
+    smartFix: input.mediaType === 'video' ? {
+      taskId: fixTaskId,
+      status: fixTaskId ? 'PROCESSING' : flawTypes.length ? 'UNAVAILABLE' : 'NO_ISSUE',
+      flawTypes
+    } : null,
+    preview
+  };
+}
+
+function normalizeMetaPreflightInput(request, body) {
+  const adText = String(body.adText || '').trim();
+  const headline = String(body.headline || body.brandName || '').trim();
+  const description = String(body.description || '').trim();
+  const mediaUrl = String(body.mediaUrl || '').trim();
+  const mediaType = body.mediaType === 'video' ? 'video' : body.mediaType === 'image' ? 'image' : '';
+  const landingPage = String(body.landingPage || publicOrigin(request)).trim();
+  const adAccountId = String(body.adAccountId || '').trim().replace(/^act_/, '');
+  const pageId = String(body.pageId || '').trim();
+  const adFormat = String(body.adFormat || 'MOBILE_FEED_STANDARD').trim();
+  if (!adText && !mediaUrl) throw Object.assign(new Error('请至少填写广告文案或上传素材'), { statusCode: 400 });
+  if (!/^https:\/\//i.test(landingPage)) throw Object.assign(new Error('Meta 官方校验要求落地页使用 HTTPS'), { statusCode: 400 });
+  if (mediaUrl && !/^https:\/\//i.test(mediaUrl)) throw Object.assign(new Error('Meta 素材地址必须使用 HTTPS'), { statusCode: 400 });
+  if (mediaUrl && !mediaType) throw Object.assign(new Error('请指定 Meta 素材类型'), { statusCode: 400 });
+  if (!adAccountId) throw Object.assign(new Error('请选择 Meta 广告账户'), { statusCode: 400 });
+  if (!pageId) throw Object.assign(new Error('请选择 Facebook Page'), { statusCode: 400 });
+  return {
+    adText,
+    headline: headline || '广告创意',
+    description,
+    mediaUrl,
+    mediaType,
+    landingPage,
+    adAccountId,
+    pageId,
+    adFormat,
+    brandName: headline || 'WzzAI Creative'
+  };
+}
+
+async function runMetaOfficialPreflight(request, body) {
+  const status = await getMetaConnectionStatus();
+  if (!status.configured || !status.connected) {
+    throw Object.assign(new Error(status.error || 'Meta Marketing API 尚未配置或 Token 无效'), { statusCode: 503 });
+  }
+  const input = normalizeMetaPreflightInput(request, body);
+  const account = status.accounts.find((item) => item.id === input.adAccountId);
+  const page = status.pages.find((item) => item.id === input.pageId);
+  if (!account) throw Object.assign(new Error('所选广告账户不在当前 Token 授权范围内'), { statusCode: 400 });
+  if (!page) throw Object.assign(new Error('所选 Page 不在当前 Token 授权范围内'), { statusCode: 400 });
+
+  const warnings = [];
+  if (account.status !== 1) warnings.push(`广告账户 ${account.name} 当前为停用状态（状态码 ${account.status}，原因码 ${account.disableReason || 0}）`);
+  if (input.mediaType === 'video') warnings.push('本次官方 validate_only 校验文案、落地页、Page 与账户上下文；视频文件仍使用本地规格检测，未在 Meta 素材库创建副本。');
+
+  try {
+    const validation = await validateMetaCreative(input);
+    let preview = null;
+    try {
+      const generated = await generateMetaPreview(input, validation.creative);
+      preview = {
+        status: generated.available ? 'SUCCESS' : 'UNAVAILABLE',
+        format: generated.format,
+        url: generated.previewUrl
+      };
+    } catch (error) {
+      preview = { status: 'FAILED', format: input.adFormat, url: '', error: serializeMetaError(error) };
+    }
+    return {
+      adAccount: account,
+      page,
+      coverage: input.mediaType === 'video' ? 'TEXT_LINK_ACCOUNT' : 'FULL_CREATIVE',
+      warnings,
+      validation: { status: 'PASSED', noAdCreated: true, response: validation.result },
+      preview
+    };
+  } catch (error) {
+    return {
+      adAccount: account,
+      page,
+      coverage: input.mediaType === 'video' ? 'TEXT_LINK_ACCOUNT' : 'FULL_CREATIVE',
+      warnings,
+      validation: { status: 'FAILED', noAdCreated: true, error: serializeMetaError(error) },
+      preview: null
+    };
+  }
+}
+
+function redirectTikTokCallback(response, request, status, message) {
+  const base = String(process.env.PUBLIC_DASHBOARD_URL || publicOrigin(request)).replace(/\/$/, '');
+  const query = new URLSearchParams({ platform: 'tiktok', oauth: status });
+  if (message) query.set('message', String(message).slice(0, 240));
+  response.writeHead(302, { Location: `${base}/dashboard/preflight?${query.toString()}` });
+  response.end();
+}
+
 async function route(request, response) {
   const url = new URL(request.url, `http://${request.headers.host}`);
 
@@ -535,6 +806,149 @@ async function route(request, response) {
     return sendJson(response, 200, { user });
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/integrations/meta/status') {
+    const currentUser = requireLogin(request, response);
+    if (!currentUser) return;
+    return sendJson(response, 200, await getMetaConnectionStatus());
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/integrations/tiktok/status') {
+    const currentUser = requireLogin(request, response);
+    if (!currentUser) return;
+    const connection = await findPlatformConnection(currentUser.id, 'tiktok');
+    return sendJson(response, 200, tikTokConnectionView(connection, publicOrigin(request)));
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/integrations/tiktok/authorize') {
+    const currentUser = requireLogin(request, response);
+    if (!currentUser) return;
+    return sendJson(response, 200, { authorizationUrl: buildTikTokAuthorizationUrl(currentUser.id, publicOrigin(request)) });
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/integrations/tiktok/callback') {
+    try {
+      const state = verifyTikTokOAuthState(url.searchParams.get('state'));
+      const owner = await findUser(state.userId);
+      if (!owner?.enabled) throw Object.assign(new Error('授权用户不存在或已被禁用'), { statusCode: 403 });
+      const authError = url.searchParams.get('error') || url.searchParams.get('error_description');
+      if (authError) return redirectTikTokCallback(response, request, 'error', authError);
+      const authCode = url.searchParams.get('auth_code');
+      if (!authCode) return redirectTikTokCallback(response, request, 'error', '授权回调缺少 auth_code');
+      const token = await exchangeTikTokAuthCode(authCode, publicOrigin(request));
+      let advertisers = [];
+      try {
+        advertisers = await getTikTokAdvertisers(token.access_token, publicOrigin(request));
+      } catch {
+        advertisers = (token.advertiser_ids || []).map((advertiserId) => ({ advertiserId: String(advertiserId), advertiserName: String(advertiserId) }));
+      }
+      const scopes = Array.isArray(token.scope) ? token.scope : String(token.scope || '').split(',').map((item) => item.trim()).filter(Boolean);
+      await savePlatformConnection({
+        userId: state.userId,
+        platform: 'tiktok',
+        accessTokenEncrypted: encryptTikTokToken(token.access_token),
+        refreshTokenEncrypted: encryptTikTokToken(token.refresh_token || ''),
+        tokenExpiresAt: futureIso(token.expires_in),
+        refreshExpiresAt: futureIso(token.refresh_token_expires_in),
+        scopes,
+        selectedAccountId: advertisers[0]?.advertiserId || String(token.advertiser_ids?.[0] || ''),
+        accounts: advertisers,
+        metadata: { openId: token.open_id || '' }
+      });
+      return redirectTikTokCallback(response, request, 'success', 'TikTok Ads 已连接');
+    } catch (error) {
+      return redirectTikTokCallback(response, request, 'error', error.message);
+    }
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/integrations/tiktok/advertisers/refresh') {
+    const currentUser = requireLogin(request, response);
+    if (!currentUser) return;
+    const { connection, accessToken } = await requireTikTokConnection(currentUser.id);
+    const advertisers = await getTikTokAdvertisers(accessToken, publicOrigin(request));
+    const selectedAccountId = advertisers.some((item) => item.advertiserId === connection.selectedAccountId)
+      ? connection.selectedAccountId
+      : advertisers[0]?.advertiserId || '';
+    const saved = await savePlatformConnection({ ...connection, accounts: advertisers, selectedAccountId });
+    return sendJson(response, 200, tikTokConnectionView(saved, publicOrigin(request)));
+  }
+
+  if (request.method === 'PUT' && url.pathname === '/api/integrations/tiktok/account') {
+    const currentUser = requireLogin(request, response);
+    if (!currentUser) return;
+    const connection = await findPlatformConnection(currentUser.id, 'tiktok', { includeSecrets: true });
+    if (!connection) return sendJson(response, 409, { error: '请先授权连接 TikTok Ads' });
+    const body = await readBody(request);
+    const advertiserId = String(body.advertiserId || '');
+    if (!connection.accounts.some((item) => item.advertiserId === advertiserId)) return sendJson(response, 400, { error: '广告账户不在当前授权范围内' });
+    const saved = await savePlatformConnection({ ...connection, selectedAccountId: advertiserId });
+    return sendJson(response, 200, tikTokConnectionView(saved, publicOrigin(request)));
+  }
+
+  if (request.method === 'DELETE' && url.pathname === '/api/integrations/tiktok') {
+    const currentUser = requireLogin(request, response);
+    if (!currentUser) return;
+    await removePlatformConnection(currentUser.id, 'tiktok');
+    return sendJson(response, 200, { ok: true });
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/preflight/tiktok/run') {
+    const currentUser = requireLogin(request, response);
+    if (!currentUser) return;
+    return sendJson(response, 202, await runTikTokOfficialPreflight(currentUser.id, await readBody(request)));
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/preflight/meta/run') {
+    const currentUser = requireLogin(request, response);
+    if (!currentUser) return;
+    return sendJson(response, 200, await runMetaOfficialPreflight(request, await readBody(request)));
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/preflight/tiktok/preview') {
+    const currentUser = requireLogin(request, response);
+    if (!currentUser) return;
+    const { connection, accessToken } = await requireTikTokConnection(currentUser.id);
+    const body = await readBody(request);
+    const input = normalizeTikTokPreflightInput({ ...body, mediaUrl: '', landingPage: '' });
+    const materialId = String(body.materialId || '').trim();
+    if (!materialId || !body.mediaType) return sendJson(response, 400, { error: 'materialId 和 mediaType 为必填项' });
+    return sendJson(response, 200, await createTikTokPreview(accessToken, {
+      ...input,
+      advertiserId: connection.selectedAccountId,
+      materialId,
+      mediaType: body.mediaType
+    }));
+  }
+
+  if (request.method === 'GET' && /^\/api\/preflight\/tiktok\/pre-review\/[^/]+$/.test(url.pathname)) {
+    const currentUser = requireLogin(request, response);
+    if (!currentUser) return;
+    const { connection, accessToken } = await requireTikTokConnection(currentUser.id);
+    const taskId = decodeURIComponent(url.pathname.split('/')[5]);
+    return sendJson(response, 200, await getTikTokPreReviewResult(accessToken, connection.selectedAccountId, taskId));
+  }
+
+  if (request.method === 'GET' && /^\/api\/preflight\/tiktok\/smart-fix\/[^/]+$/.test(url.pathname)) {
+    const currentUser = requireLogin(request, response);
+    if (!currentUser) return;
+    const { connection, accessToken } = await requireTikTokConnection(currentUser.id);
+    const taskId = decodeURIComponent(url.pathname.split('/')[5]);
+    return sendJson(response, 200, await getTikTokSmartFixResult(accessToken, connection.selectedAccountId, taskId));
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/preflight/tiktok/smart-fix') {
+    const currentUser = requireLogin(request, response);
+    if (!currentUser) return;
+    const { connection, accessToken } = await requireTikTokConnection(currentUser.id);
+    const body = await readBody(request);
+    const videoId = String(body.videoId || '').trim();
+    if (!videoId) return sendJson(response, 400, { error: 'videoId 为必填项' });
+    return sendJson(response, 202, await createTikTokSmartFix(accessToken, connection.selectedAccountId, videoId));
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/uploads/media') {
+    return saveUploadedMedia(request, response);
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/providers') {
     if (!requireLogin(request, response)) return;
     return sendJson(response, 200, await listProviders({ includeSecrets: false }));
@@ -557,6 +971,55 @@ async function route(request, response) {
     const body = await readBody(request);
     const saved = await saveProvider({ ...existing, ...body, id: providerId });
     return sendJson(response, 200, { ok: true, provider: saved });
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/admin/model-connections') {
+    if (!requireRole(request, response, ['admin'])) return;
+    const providers = await listProviders({ includeSecrets: false });
+    return sendJson(response, 200, listModelConnectionPresets(providers));
+  }
+
+  if (request.method === 'PUT' && /^\/api\/admin\/model-connections\/[^/]+$/.test(url.pathname)) {
+    if (!requireRole(request, response, ['admin'])) return;
+    const connectionId = decodeURIComponent(url.pathname.split('/')[4]);
+    const preset = getModelConnectionPreset(connectionId);
+    if (!preset) return sendJson(response, 404, { error: 'Model connection not found' });
+    const body = await readBody(request);
+    const nextApiKey = String(body.apiKey || '').trim();
+    if (nextApiKey.length > 500) return sendJson(response, 400, { error: 'API Key 格式不正确' });
+
+    for (const providerId of preset.providerIds) {
+      const existing = await findProvider(providerId, { includeSecrets: true });
+      if (!existing) continue;
+      await saveProvider({
+        ...existing,
+        enabled: typeof body.enabled === 'boolean' ? body.enabled : existing.enabled,
+        apiKey: nextApiKey || existing.apiKey
+      });
+    }
+
+    const providers = await listProviders({ includeSecrets: false });
+    const connection = listModelConnectionPresets(providers).find((item) => item.id === connectionId);
+    return sendJson(response, 200, { ok: true, connection });
+  }
+
+  if (request.method === 'POST' && /^\/api\/admin\/model-connections\/[^/]+\/test$/.test(url.pathname)) {
+    if (!requireRole(request, response, ['admin'])) return;
+    const connectionId = decodeURIComponent(url.pathname.split('/')[4]);
+    const preset = getModelConnectionPreset(connectionId);
+    if (!preset) return sendJson(response, 404, { error: 'Model connection not found' });
+    const provider = await findProvider(preset.primaryProviderId, { includeSecrets: true });
+    if (!provider) return sendJson(response, 404, { error: 'Provider not found' });
+    const result = await discoverConnectionModels(preset, provider);
+    await saveProvider({
+      ...provider,
+      settings: {
+        ...(provider.settings || {}),
+        discoveredModels: result.models.slice(0, 1000),
+        discoveredAt: result.checkedAt
+      }
+    });
+    return sendJson(response, 200, result);
   }
 
   if (request.method === 'GET' && url.pathname === '/api/admin/models') {
@@ -587,6 +1050,37 @@ async function route(request, response) {
   if (request.method === 'GET' && url.pathname === '/api/models') {
     if (!requireLogin(request, response)) return;
     return sendJson(response, 200, await listModels({ customerOnly: true }));
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/projects') {
+    const currentUser = requireLogin(request, response);
+    if (!currentUser) return;
+    return sendJson(response, 200, await listCreativeProjects({ userId: currentUser.id }));
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/projects') {
+    const currentUser = requireLogin(request, response);
+    if (!currentUser) return;
+    const body = await readBody(request);
+    return sendJson(response, 201, await createCreativeProject({ userId: currentUser.id, title: body.title }));
+  }
+
+  if (/^\/api\/projects\/[^/]+$/.test(url.pathname)) {
+    const currentUser = requireLogin(request, response);
+    if (!currentUser) return;
+    const projectId = decodeURIComponent(url.pathname.split('/')[3]);
+    const project = await findCreativeProject(projectId, { userId: currentUser.id });
+    if (!project) return sendJson(response, 404, { error: 'Project not found' });
+
+    if (request.method === 'GET') return sendJson(response, 200, project);
+    if (request.method === 'PUT') {
+      const body = await readBody(request);
+      return sendJson(response, 200, await updateCreativeProject(projectId, currentUser.id, body));
+    }
+    if (request.method === 'DELETE') {
+      await deleteCreativeProject(projectId, currentUser.id);
+      return sendJson(response, 200, { ok: true });
+    }
   }
 
   if (request.method === 'GET' && url.pathname === '/api/jobs') {
@@ -638,10 +1132,22 @@ async function route(request, response) {
   }
 
   if (request.method === 'PUT' && url.pathname.startsWith('/api/admin/users/')) {
-    if (!requireRole(request, response, ['admin'])) return;
+    const operator = requireRole(request, response, ['admin']);
+    if (!operator) return;
     const userId = decodeURIComponent(url.pathname.split('/')[4]);
     const body = await readBody(request);
-    const saved = await updateUser(userId, body);
+    const existing = await findUser(userId);
+    if (!existing) return sendJson(response, 404, { error: 'User not found' });
+    const patch = normalizeAdminUserPatch(body);
+    if (operator.id === userId && patch.enabled === false) return sendJson(response, 400, { error: '不能禁用当前登录的管理员账号' });
+    if (operator.id === userId && patch.role && patch.role !== 'admin') return sendJson(response, 400, { error: '不能修改当前登录账号的管理员角色' });
+    let saved;
+    try {
+      saved = await updateUser(userId, patch);
+    } catch (error) {
+      if (String(error.message || '').includes('UNIQUE')) return sendJson(response, 409, { error: '该邮箱已被其他用户使用' });
+      throw error;
+    }
     if (!saved) return sendJson(response, 404, { error: 'User not found' });
     return sendJson(response, 200, saved);
   }
@@ -649,7 +1155,16 @@ async function route(request, response) {
   if (request.method === 'POST' && url.pathname === '/api/admin/users') {
     if (!requireRole(request, response, ['admin'])) return;
     const body = await readBody(request);
-    return sendJson(response, 201, await createUser(body));
+    const normalizedBody = { ...body, enabled: body.enabled ?? true };
+    if (!String(normalizedBody.name || '').trim()) delete normalizedBody.name;
+    const input = normalizeAdminUserPatch(normalizedBody);
+    if (!input.email || !input.password) return sendJson(response, 400, { error: '邮箱和至少 8 位密码为必填项' });
+    try {
+      return sendJson(response, 201, await createUser(input));
+    } catch (error) {
+      if (String(error.message || '').includes('UNIQUE')) return sendJson(response, 409, { error: '该邮箱已注册' });
+      throw error;
+    }
   }
 
   if (request.method === 'POST' && /^\/api\/admin\/users\/[^/]+\/recharge$/.test(url.pathname)) {

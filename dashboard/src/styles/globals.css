@@ -41,6 +41,43 @@
   }
 }
 
+.creative-shell {
+  --background: oklch(0.105 0.006 55);
+  --foreground: oklch(0.965 0.004 85);
+  --card: oklch(0.145 0.008 55);
+  --card-foreground: oklch(0.965 0.004 85);
+  --popover: oklch(0.17 0.008 55);
+  --popover-foreground: oklch(0.965 0.004 85);
+  --primary: oklch(0.71 0.19 48);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.21 0.008 55);
+  --secondary-foreground: oklch(0.94 0 0);
+  --muted: oklch(0.205 0.008 55);
+  --muted-foreground: oklch(0.67 0.01 70);
+  --accent: oklch(0.25 0.012 55);
+  --accent-foreground: oklch(0.98 0 0);
+  --border: oklch(0.27 0.009 55);
+  --input: oklch(0.26 0.009 55);
+  --ring: oklch(0.71 0.19 48);
+  --sidebar: oklch(0.16 0.009 55);
+  --sidebar-foreground: oklch(0.94 0.004 85);
+  --sidebar-primary: oklch(0.71 0.19 48);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.225 0.011 55);
+  --sidebar-accent-foreground: oklch(0.98 0 0);
+  --sidebar-border: oklch(0.24 0.009 55);
+  --sidebar-ring: oklch(0.71 0.19 48);
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.creative-grid {
+  background-image:
+    linear-gradient(to right, color-mix(in oklab, var(--border) 36%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklab, var(--border) 36%, transparent) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
 /* View Transition Wave Effect */
 ::view-transition-old(root),
 ::view-transition-new(root) {

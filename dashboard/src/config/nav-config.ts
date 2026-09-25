@@ -2,34 +2,41 @@ import { NavGroup } from '@/types';
 
 export const navGroups: NavGroup[] = [
   {
-    label: 'AI 工作台',
+    label: '',
     items: [
       {
-        title: '数据概览',
-        url: '/dashboard/overview',
-        icon: 'dashboard',
-        shortcut: ['d', 'd'],
+        title: '灵感画布',
+        url: '/dashboard/canvas',
+        icon: 'canvas',
+        shortcut: ['c', 'c'],
         items: []
       },
       {
-        title: 'AI 素材生成',
-        url: '/dashboard/generate',
-        icon: 'sparkles',
-        shortcut: ['g', 'g'],
+        title: '首页',
+        url: '/dashboard/home',
+        icon: 'home',
+        shortcut: ['h', 'h'],
         items: []
       },
       {
-        title: '素材库',
-        url: '/dashboard/assets',
-        icon: 'media',
-        shortcut: ['a', 'a'],
+        title: '投前检测',
+        url: '/dashboard/preflight',
+        icon: 'shieldCheck',
+        shortcut: ['p', 'p'],
         items: []
       },
       {
-        title: '任务记录',
-        url: '/dashboard/jobs',
-        icon: 'clock',
-        shortcut: ['j', 'j'],
+        title: 'AI 工具',
+        url: '/dashboard/tools',
+        icon: 'apps',
+        shortcut: ['t', 't'],
+        items: []
+      },
+      {
+        title: 'Meta 工具',
+        url: '/dashboard/meta-tools',
+        icon: 'meta',
+        shortcut: ['m', 'm'],
         items: []
       }
     ]
@@ -57,23 +64,6 @@ export const navGroups: NavGroup[] = [
         icon: 'creditCard',
         items: [],
         access: { role: 'admin' }
-      }
-    ]
-  },
-  {
-    label: '账户',
-    items: [
-      {
-        title: '我的积分',
-        url: '/dashboard/billing',
-        icon: 'creditCard',
-        items: []
-      },
-      {
-        title: '账户设置',
-        url: '/dashboard/profile',
-        icon: 'account',
-        items: []
       }
     ]
   }

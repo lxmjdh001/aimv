@@ -53,9 +53,9 @@ export default function PageContainer({
   const hasHeader = pageTitle || pageHeaderAction;
 
   return (
-    <div className='flex flex-1 flex-col px-4 pt-2 pb-4 md:px-6 md:pt-4'>
+    <div className='flex min-w-0 max-w-full flex-1 flex-col overflow-x-hidden px-4 pt-2 pb-4 md:px-6 md:pt-4'>
       {hasHeader && (
-        <div className='mb-4 flex items-start justify-between gap-4'>
+        <div className='mb-4 flex min-w-0 flex-col items-start justify-between gap-4 sm:flex-row'>
           <Heading
             title={pageTitle ?? ''}
             description={pageDescription ?? ''}

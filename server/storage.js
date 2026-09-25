@@ -1,7 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { chargeDbJob, createDbJob, createDbUser, getDbJob, getDbModel, getDbPointSettings, getDbProvider, getDbUser, initDb, listDbJobs, listDbModels, listDbProviders, listDbUsers, listDbWalletTransactions, rechargeDbUser, saveDbPointSettings, updateDbJob, updateDbUser, upsertDbModel, upsertProvider } from './db.js';
+import { chargeDbJob, createDbCreativeProject, createDbJob, createDbUser, deleteDbCreativeProject, deleteDbPlatformConnection, getDbCreativeProject, getDbJob, getDbModel, getDbPlatformConnection, getDbPointSettings, getDbProvider, getDbUser, initDb, listDbCreativeProjects, listDbJobs, listDbModels, listDbProviders, listDbUsers, listDbWalletTransactions, rechargeDbUser, saveDbPointSettings, updateDbCreativeProject, updateDbJob, updateDbUser, upsertDbModel, upsertDbPlatformConnection, upsertProvider } from './db.js';
 
 const rootDir = process.cwd();
 const configDir = path.join(rootDir, 'data', 'config');
@@ -87,6 +87,38 @@ export async function getPointSettings() {
 
 export async function savePointSettings(settings) {
   return saveDbPointSettings(settings);
+}
+
+export async function listCreativeProjects(options) {
+  return listDbCreativeProjects(options);
+}
+
+export async function findCreativeProject(projectId, options) {
+  return getDbCreativeProject(projectId, options);
+}
+
+export async function createCreativeProject(payload) {
+  return createDbCreativeProject(payload);
+}
+
+export async function updateCreativeProject(projectId, userId, patch) {
+  return updateDbCreativeProject(projectId, userId, patch);
+}
+
+export async function deleteCreativeProject(projectId, userId) {
+  return deleteDbCreativeProject(projectId, userId);
+}
+
+export async function findPlatformConnection(userId, platform, options) {
+  return getDbPlatformConnection(userId, platform, options);
+}
+
+export async function savePlatformConnection(connection) {
+  return upsertDbPlatformConnection(connection);
+}
+
+export async function removePlatformConnection(userId, platform) {
+  return deleteDbPlatformConnection(userId, platform);
 }
 
 export async function createJob(payload) {

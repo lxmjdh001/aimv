@@ -18,8 +18,8 @@ export default function SignInViewPage() {
   const searchParams = useSearchParams();
   const { login, refresh } = useAuth();
   const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [email, setEmail] = useState('admin@7c.local');
-  const [password, setPassword] = useState('7cadmin123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [registerEmail, setRegisterEmail] = useState('');
   const [registerPassword, setRegisterPassword] = useState('');
   const [captchaId, setCaptchaId] = useState('');
@@ -49,7 +49,7 @@ export default function SignInViewPage() {
     setSubmitting(true);
     try {
       await login(email, password);
-      router.replace(searchParams.get('redirect') || '/dashboard/overview');
+      router.replace(searchParams.get('redirect') || '/dashboard/home');
     } catch (err) {
       setError(err instanceof Error ? err.message : '登录失败');
     } finally {
@@ -73,7 +73,7 @@ export default function SignInViewPage() {
         })
       });
       await refresh();
-      router.replace(searchParams.get('redirect') || '/dashboard/overview');
+      router.replace(searchParams.get('redirect') || '/dashboard/home');
     } catch (err) {
       setError(err instanceof Error ? err.message : '注册失败');
       await loadCaptcha().catch(() => null);
@@ -89,7 +89,7 @@ export default function SignInViewPage() {
   return (
     <div className='relative flex min-h-screen flex-col items-center justify-center overflow-hidden md:grid lg:max-w-none lg:grid-cols-2 lg:px-0'>
       <Link
-        href='/dashboard/overview'
+        href='/dashboard/home'
         className={cn(
           buttonVariants({ variant: 'ghost' }),
           'absolute top-4 right-4 hidden md:top-8 md:right-8'
@@ -149,7 +149,7 @@ export default function SignInViewPage() {
                   <form onSubmit={handleSubmit} className='space-y-4'>
                     <div className='space-y-2'>
                       <Label htmlFor='email'>邮箱</Label>
-                      <Input id='email' type='email' value={email} onChange={(event) => setEmail(event.target.value)} placeholder='admin@7c.local' required />
+                      <Input id='email' type='email' value={email} onChange={(event) => setEmail(event.target.value)} placeholder='you@example.com' required />
                     </div>
                     <div className='space-y-2'>
                       <Label htmlFor='password'>密码</Label>
@@ -160,9 +160,6 @@ export default function SignInViewPage() {
                       {submitting ? '登录中...' : '登录'}
                     </Button>
                   </form>
-                  <div className='text-muted-foreground mt-4 rounded-md bg-muted p-3 text-xs'>
-                    默认管理员：admin@7c.local / 7cadmin123。上线前请修改默认密码。
-                  </div>
                 </TabsContent>
                 <TabsContent value='register' className='mt-4'>
                   <form onSubmit={handleRegister} className='space-y-4'>
@@ -196,7 +193,7 @@ export default function SignInViewPage() {
             </CardContent>
           </Card>
           <p className='text-muted-foreground px-8 text-center text-sm'>
-            登录后将进入保留 Fantastic / shadcn 风格的 SaaS 控制台。
+            登录后进入 AI 广告创意与投放工作台。
           </p>
         </div>
       </div>
