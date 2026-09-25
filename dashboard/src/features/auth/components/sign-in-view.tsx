@@ -1,7 +1,7 @@
 'use client';
 
 import { Button, buttonVariants } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Label } from '@/components/ui/label';
@@ -137,7 +137,6 @@ export default function SignInViewPage() {
           <Card className='w-full border-border/70 shadow-xl'>
             <CardHeader className='space-y-1'>
               <CardTitle className='text-2xl'>{mode === 'login' ? '登录 AI MV' : '注册 AI MV'}</CardTitle>
-              <CardDescription>使用 SQLite 自建账号登录，区分管理员和客户权限。</CardDescription>
             </CardHeader>
             <CardContent>
               <Tabs value={mode} onValueChange={(value) => { setMode(value as 'login' | 'register'); setError(''); if (value === 'register') loadCaptcha().catch(() => null); }}>
