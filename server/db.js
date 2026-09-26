@@ -207,6 +207,30 @@ const defaultModelCatalog = [
     customerEnabled: true,
     config: { workflowType: 'imageToVideo', resolution: '720P', duration: 5, watermark: false },
     sortOrder: 50
+  },
+  {
+    id: 'wan30-text-to-video',
+    displayName: '万相 3.0 文生视频 · 原生 30 秒',
+    providerId: 'aliyun-bailian',
+    modelName: 'wan3.0-video',
+    modality: 'video',
+    capability: 'text_to_video',
+    enabled: true,
+    customerEnabled: true,
+    config: { workflowType: 'textToVideo', resolution: '720P', ratio: '9:16', duration: 5, watermark: false, audio: true },
+    sortOrder: 55
+  },
+  {
+    id: 'wan30-image-to-video',
+    displayName: '万相 3.0 图生视频 · 原生 30 秒',
+    providerId: 'aliyun-bailian',
+    modelName: 'wan3.0-video',
+    modality: 'video',
+    capability: 'image_to_video',
+    enabled: true,
+    customerEnabled: true,
+    config: { workflowType: 'imageToVideo', resolution: '720P', ratio: '9:16', duration: 5, watermark: false, audio: true },
+    sortOrder: 56
   }
 ];
 

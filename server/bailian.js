@@ -16,10 +16,10 @@ function getApiKey(provider) {
   return apiKey;
 }
 
-function normalizeDuration(value) {
+function normalizeDuration(value, max = 15) {
   const duration = Number(value ?? 5);
-  if (!Number.isInteger(duration) || duration < 3 || duration > 15) {
-    throw new Error('视频时长必须是 3 到 15 之间的整数');
+  if (!Number.isInteger(duration) || duration < 3 || duration > max) {
+    throw new Error(`当前模型视频时长必须是 3 到 ${max} 之间的整数`);
   }
   return duration;
 }
@@ -75,7 +75,28 @@ function buildHappyHorseImageToVideoPayload(input) {
   };
 }
 
-function buildPayload(workflowType, input) {
+export function buildBailianVideoPayload(workflowType, input) {
+  if (['wan3.0-video', 'wan3.0-video-prime'].includes(input.model)) {
+    if (!['textToVideo', 'imageToVideo'].includes(workflowType)) throw new Error('万相 3.0 仅支持当前文生视频或图生视频入口');
+    const prompt = String(input.prompt ?? '').trim();
+    if (!prompt) throw new Error('请输入文本提示词');
+    const imageUrl = String(input.imageUrl ?? input.imagePath ?? '').trim();
+    if (workflowType === 'imageToVideo' && !imageUrl) throw new Error('图生视频需要输入首帧图片 URL');
+    return {
+      model: input.model,
+      input: compactObject({ prompt, media: workflowType === 'imageToVideo' ? [{ type: 'first_frame', url: imageUrl }] : undefined }),
+      parameters: compactObject({
+        resolution: input.resolution ?? '720P',
+        ratio: input.ratio ?? '9:16',
+        duration: normalizeDuration(input.duration, 30),
+        watermark: input.watermark ?? false,
+        audio: input.audio ?? true,
+        seed: normalizeSeed(input.seed)
+      })
+    };
+  }
+  const expectedModel = workflowType === 'imageToVideo' ? 'happyhorse-1.0-i2v' : 'happyhorse-1.0-t2v';
+  if (input.model && input.model !== expectedModel) throw new Error(`当前视频适配器尚未支持模型 ${input.model}`);
   if (workflowType === 'textToVideo') return buildHappyHorseTextToVideoPayload(input);
   if (workflowType === 'imageToVideo') return buildHappyHorseImageToVideoPayload(input);
   throw new Error('当前只支持 HappyHorse 文生视频和图生视频');
@@ -91,7 +112,7 @@ function normalizeRemoteStatus(remote) {
 
 export async function submitBailianTask(provider, workflowType, input) {
   const baseUrl = trimTrailingSlash(provider.baseUrl ?? DEFAULT_BASE_URL);
-  const payload = buildPayload(workflowType, input);
+  const payload = buildBailianVideoPayload(workflowType, input);
   const response = await fetch(`${baseUrl}${VIDEO_ENDPOINT}`, {
     method: 'POST',
     signal: AbortSignal.timeout(45_000),
@@ -149,6 +170,6 @@ export async function checkBailianStatus(provider) {
     ok: Boolean(provider.apiKey || process.env[provider.apiKeyEnv ?? 'DASHSCOPE_API_KEY']),
     status: 'configured',
     baseUrl: provider.baseUrl ?? DEFAULT_BASE_URL,
-    models: ['happyhorse-1.0-t2v', 'happyhorse-1.0-i2v']
+    models: ['happyhorse-1.0-t2v', 'happyhorse-1.0-i2v', 'wan3.0-video', 'wan3.0-video-prime']
   };
 }

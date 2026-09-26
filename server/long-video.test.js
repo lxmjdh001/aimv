@@ -5,23 +5,48 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { videoSegments, videoPointCost } from './video-duration.js';
+import { VIDEO_DURATIONS, validateVideoDuration, modelSupportsVideoDuration, videoSegments, videoPointCost } from './video-duration.js';
 import { advanceLongVideo, createLongVideoPlan, composeLongVideo, segmentInput } from './long-video.js';
-import { submitBailianTask } from './bailian.js';
+import { buildBailianVideoPayload, submitBailianTask } from './bailian.js';
 
 const exec = promisify(execFile);
 const jobFor = (duration) => ({ id: `test-${duration}`, status: 'running', workflowType: 'textToVideo', input: { prompt: '展示同一款蓝色背包', duration, imageUrl: 'https://example.com/reference.png' }, remoteJob: createLongVideoPlan(duration) });
 
-test('duration plans and point quotes preserve short jobs and cover exact totals', () => {
+test('legacy duration plans remain readable; native jobs quote one request', () => {
   const model = { modality: 'video', config: { pointCost: 3.25 } };
   for (const duration of [5, 10, 15, 20, 30, 60]) {
     const segments = videoSegments(duration);
     assert.equal(segments.reduce((a, b) => a + b), duration);
     assert.ok(segments.every((s) => s >= 3 && s <= 15));
-    assert.equal(videoPointCost(model, { duration }), 3.25 * segments.length);
+    assert.equal(videoPointCost(model, { duration }), 3.25);
   }
   for (const invalid of [0, -1, 16, 61, 'abc', 15.5]) assert.throws(() => videoSegments(invalid));
   assert.equal(videoPointCost({ modality: 'image', config: { pointCost: 2 } }, { duration: 60 }), 2);
+});
+
+test('new tasks allow only 5/10/30 and require Wan 3 for native 30', () => {
+  assert.deepEqual(VIDEO_DURATIONS, [5, 10, 30]);
+  for (const value of VIDEO_DURATIONS) assert.equal(validateVideoDuration(String(value)), value);
+  for (const value of [0, 15, 20, 60, 30.5, 'abc']) assert.throws(() => validateVideoDuration(value), { statusCode: 400 });
+  assert.equal(modelSupportsVideoDuration({ modelName: 'happyhorse-1.0-t2v' }, 30), false);
+  assert.equal(modelSupportsVideoDuration({ modelName: 'wan3.0-video' }, 30), true);
+  assert.equal(modelSupportsVideoDuration({ modelName: 'wan3.0-video-prime' }, 30), true);
+});
+
+test('Wan 3 uses native duration and first_frame media instead of HappyHorse payload', () => {
+  for (const model of ['wan3.0-video', 'wan3.0-video-prime']) {
+    const input = { model, prompt: 'test', duration: 30, imageUrl: 'https://example.com/reference.png' };
+    const text = buildBailianVideoPayload('textToVideo', input);
+    assert.equal(text.model, model);
+    assert.equal(text.parameters.duration, 30);
+    assert.equal(text.input.media, undefined);
+    const image = buildBailianVideoPayload('imageToVideo', input);
+    assert.deepEqual(image.input.media, [{ type: 'first_frame', url: input.imageUrl }]);
+    assert.equal(image.parameters.audio, true);
+    assert.throws(() => buildBailianVideoPayload('imageToVideo', { ...input, imageUrl: '' }));
+    assert.throws(() => buildBailianVideoPayload('textToVideo', { ...input, duration: 60 }));
+  }
+  assert.throws(() => buildBailianVideoPayload('textToVideo', { model: 'happyhorse-1.0-t2v', prompt: 'test', duration: 30 }));
 });
 
 test('15 second request reaches the real adapter unchanged (mock HTTP, no paid calls)', async (t) => {

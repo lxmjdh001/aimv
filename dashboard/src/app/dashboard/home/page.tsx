@@ -61,8 +61,8 @@ export default function CreativeHomePage() {
   const assets = useMemo(() => jobs.flatMap(jobToAssets), [jobs]);
   const visibleAssets = tab === 'inspiration' ? assets : assets.filter((asset) => asset.type === tab);
   const compatibleModels = useMemo(
-    () => models.filter((model) => modelSupportsGeneration(model, generationType, Boolean(referenceUrl))),
-    [generationType, models, referenceUrl]
+    () => models.filter((model) => modelSupportsGeneration(model, generationType, Boolean(referenceUrl), Number(duration))),
+    [generationType, models, referenceUrl, duration]
   );
   const selectedModel = compatibleModels.find((model) => model.id === modelId);
 
@@ -279,7 +279,7 @@ export default function CreativeHomePage() {
                 <SelectContent>{videoDurationOptions.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent>
               </Select>
             )}
-            <span className='ml-auto whitespace-nowrap px-1 text-xs text-muted-foreground'>⚡ {selectedModel ? generationModelCost(selectedModel, Number(duration)) : '按所选模型计费'} 积分</span>
+            <span className='ml-auto whitespace-nowrap px-1 text-xs text-muted-foreground'>⚡ {selectedModel ? generationModelCost(selectedModel) : '按所选模型计费'} 积分</span>
             <button type='button' onClick={() => setComposerExpanded(false)} className='rounded-lg p-2 text-muted-foreground hover:bg-white/8 hover:text-white' aria-label='收起创作设置'><IconX className='size-4' /></button>
           </div>
         )}

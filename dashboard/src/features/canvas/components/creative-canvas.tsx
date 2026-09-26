@@ -85,7 +85,7 @@ export default function CreativeCanvas({ projectId }: { projectId: string }) {
   const [generationType, setGenerationType] = useState<GenerationType>(requestedType === 'video' ? 'video' : 'image');
   const [modelId, setModelId] = useState(searchParams.get('modelId') || 'auto');
   const [ratio, setRatio] = useState(searchParams.get('ratio') || '9:16');
-  const [duration, setDuration] = useState(searchParams.get('duration') || '5');
+  const [duration, setDuration] = useState(() => videoDurationOptions.find((item) => item.value === searchParams.get('duration'))?.value ?? '5');
   const [prompt, setPrompt] = useState(searchParams.get('prompt') || '');
   const [referenceUrl, setReferenceUrl] = useState(searchParams.get('referenceUrl') || '');
   const [referencePreview, setReferencePreview] = useState(searchParams.get('referencePreview') || '');
@@ -105,8 +105,8 @@ export default function CreativeCanvas({ projectId }: { projectId: string }) {
   );
   const libraryAssets = useMemo(() => projectJobs.flatMap(jobToAssets), [projectJobs]);
   const compatibleModels = useMemo(
-    () => models.filter((model) => modelSupportsGeneration(model, generationType, Boolean(referenceUrl))),
-    [generationType, models, referenceUrl]
+    () => models.filter((model) => modelSupportsGeneration(model, generationType, Boolean(referenceUrl), Number(duration))),
+    [generationType, models, referenceUrl, duration]
   );
   const selectedModel = compatibleModels.find((model) => model.id === modelId);
   const selectedElement = elements.find((element) => element.id === selectedId) ?? null;
@@ -634,7 +634,7 @@ export default function CreativeCanvas({ projectId }: { projectId: string }) {
             <div className='space-y-2'><Label>画面比例</Label><Select value={ratio} onValueChange={setRatio}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{generationRatioOptions.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select></div>
             {generationType === 'video' && <div className='space-y-2'><Label>视频时长</Label><Select value={duration} onValueChange={setDuration}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{videoDurationOptions.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select></div>}
             {generationType === 'video' && Number(duration) > 15 && <p className='text-xs text-muted-foreground'>{longVideoDescription}</p>}
-            <p className='text-sm text-muted-foreground'>预计积分：{selectedModel ? generationModelCost(selectedModel, Number(duration)) : '按匹配模型计费'}</p>
+            <p className='text-sm text-muted-foreground'>预计积分：{selectedModel ? generationModelCost(selectedModel) : '按匹配模型计费'}</p>
             <Button className='w-full bg-orange-500 hover:bg-orange-400' onClick={() => setSettingsOpen(false)}>完成</Button>
           </div>
         </DialogContent>

@@ -11,8 +11,8 @@ import { checkWanxImageStatus, submitWanxImageTask } from './wanx-image.js';
 import { discoverConnectionModels, getModelConnectionPreset, listModelConnectionPresets } from './model-connections.js';
 import { buildTikTokAuthorizationUrl, createTikTokPreReview, createTikTokPreview, createTikTokSmartFix, decryptTikTokToken, encryptTikTokToken, exchangeTikTokAuthCode, getTikTokAdvertisers, getTikTokConfig, getTikTokPreReviewResult, getTikTokSmartFixResult, uploadTikTokMedia, verifyTikTokOAuthState } from './tiktok-business.js';
 import { generateMetaPreview, getMetaConnectionStatus, serializeMetaError, validateMetaCreative } from './meta-business.js';
-import { videoSegments, videoPointCost } from './video-duration.js';
-import { advanceLongVideo, checkVideoComposer, composeLongVideo, createLongVideoPlan } from './long-video.js';
+import { validateVideoDuration, modelSupportsVideoDuration, videoPointCost } from './video-duration.js';
+import { advanceLongVideo, composeLongVideo } from './long-video.js';
 
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST ?? '127.0.0.1';
@@ -410,7 +410,7 @@ async function checkProviderStatus(provider) {
 
 async function submitProviderJob(provider, job) {
   if (/ToVideo$/.test(job.workflowType) && Number(job.input.duration) > 15 && provider.platform !== 'aliyun-bailian') {
-    throw new Error('当前模型暂不支持分段长视频，请选择阿里百炼视频模型');
+    throw new Error('30 秒视频需要选择万相 3.0 原生视频模型');
   }
   if (provider.platform === 'comfyui') {
     const result = await submitComfyWorkflow(provider, job.workflowType, job.input);
@@ -418,19 +418,7 @@ async function submitProviderJob(provider, job) {
   }
 
   if (provider.platform === 'aliyun-bailian') {
-    const segments = videoSegments(job.input.duration);
-    if (segments.length > 1) {
-      await checkVideoComposer();
-      job.remoteJob = createLongVideoPlan(job.input.duration);
-      job.status = 'running';
-      const initialTask = (async () => {
-        await updateJob(job);
-        return advanceLongVideo(job, provider, longVideoDependencies);
-      })();
-      refreshLocks.set(job.id, initialTask);
-      try { await initialTask; } finally { refreshLocks.delete(job.id); }
-      return { status: job.status, remoteJob: job.remoteJob, error: job.error };
-    }
+    validateVideoDuration(job.input.duration);
     const result = await submitBailianTask(provider, job.workflowType, job.input);
     return { status: result.status, remoteJob: result };
   }
@@ -452,6 +440,7 @@ async function submitProviderJob(provider, job) {
 function modelMatchesGeneration(model, generationType, input) {
   if (generationType === 'image') return model.modality === 'image' && model.capability === 'text_to_image';
   if (generationType === 'video') {
+    if (!modelSupportsVideoDuration(model, input.duration)) return false;
     const wantsImageToVideo = Boolean(String(input.imageUrl ?? '').trim());
     return model.modality === 'video' && model.capability === (wantsImageToVideo ? 'image_to_video' : 'text_to_video');
   }
@@ -471,6 +460,9 @@ function buildModelInput(provider, model, rawInput) {
   if (provider.platform === 'openai-image' && openaiSize) nextInput.size = openaiSize;
   if (provider.platform === 'aliyun-wanx-image' && wanxSize) nextInput.size = wanxSize;
   if (provider.platform === 'aliyun-bailian' && videoRatio && model.capability === 'text_to_video') nextInput.ratio = videoRatio;
+  if (provider.platform === 'aliyun-bailian' && videoRatio && model.capability === 'image_to_video') nextInput.ratio = videoRatio;
+  // Model choice comes from the catalog, never an arbitrary client-supplied model.
+  if (provider.platform === 'aliyun-bailian') nextInput.model = model.modelName;
 
   return nextInput;
 }
@@ -1269,11 +1261,14 @@ async function route(request, response) {
 
     const rawInput = { ...(body.input ?? {}) };
     if (body.generationType === 'video' || selectedModel?.modality === 'video' || /ToVideo$/.test(body.workflowType ?? '')) {
-      videoSegments(rawInput.duration ?? selectedModel?.config?.duration ?? 5);
+      validateVideoDuration(rawInput.duration ?? selectedModel?.config?.duration ?? 5);
     }
     if (rawInput.imageUrl) rawInput.imageUrl = toPublicUrl(request, rawInput.imageUrl);
 
     if (selectedModel) {
+      if (selectedModel.modality === 'video' && !modelSupportsVideoDuration(selectedModel, rawInput.duration ?? selectedModel.config?.duration)) {
+        return sendJson(response, 400, { error: '所选模型不支持原生 30 秒，请选择万相 3.0 或智能匹配模型' });
+      }
       const account = await findUser(currentUser.id);
       if ((account?.balance ?? 0) < modelPointCost(selectedModel, rawInput)) return sendJson(response, 402, { error: '积分不足，请先充值积分' });
       const provider = await findProvider(selectedModel.providerId, { includeSecrets: true });

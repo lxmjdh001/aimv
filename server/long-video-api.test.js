@@ -13,13 +13,13 @@ import { fileURLToPath } from 'node:url';
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const exec = promisify(execFile);
 
-test('API long-video flow: balance check, concurrent refresh, full output, exactly one charge', { timeout: 90_000 }, async () => {
+test('API native 30s: model routing, duration validation, concurrent refresh, exactly one charge', { timeout: 90_000 }, async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'aimv-api-video-test-'));
   let child, db, mock;
   try {
     await mkdir(path.join(dir, 'data'));
     const samplePath = path.join(dir, 'sample.mp4');
-    await exec('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'color=c=green:s=96x160:r=24', '-t', '15', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', samplePath]);
+    await exec('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'color=c=green:s=96x160:r=24', '-t', '30', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', samplePath]);
     const sample = await readFile(samplePath);
     const calls = [];
     mock = http.createServer(async (req, res) => {
@@ -45,7 +45,7 @@ test('API long-video flow: balance check, concurrent refresh, full output, exact
     }
     assert.ok(ready, serverLog);
     db = new DatabaseSync(path.join(dir, 'data', 'ai-mv.sqlite'));
-    const model = db.prepare("SELECT id,config_json FROM model_catalog WHERE capability='text_to_video' AND provider_id='aliyun-bailian'").get();
+    const model = db.prepare("SELECT id,config_json FROM model_catalog WHERE capability='text_to_video' AND model_name='wan3.0-video'").get();
     const config = { ...JSON.parse(model.config_json), pointCost: 3.25 };
     db.prepare('UPDATE model_catalog SET config_json=?,enabled=1,customer_enabled=1 WHERE id=?').run(JSON.stringify(config), model.id);
     db.prepare("UPDATE providers SET base_url=?,api_key='test-only',enabled=1 WHERE id='aliyun-bailian'").run(`http://127.0.0.1:${mock.address().port}`);
@@ -53,15 +53,22 @@ test('API long-video flow: balance check, concurrent refresh, full output, exact
     assert.equal(login.status, 200);
     const cookie = login.headers.get('set-cookie').split(';')[0];
     const request = (route, options = {}) => fetch(base + route, { ...options, headers: { 'Content-Type': 'application/json', Cookie: cookie } });
-    const payload = JSON.stringify({ modelId: model.id, input: { prompt: 'test blue backpack', duration: 60 } });
-    db.prepare("UPDATE users SET balance=4 WHERE email='admin@7c.local'").run();
+    for (const duration of [15, 20, 60]) {
+      assert.equal((await request('/api/jobs', { method: 'POST', body: JSON.stringify({ generationType: 'video', input: { prompt: 'test', duration } }) })).status, 400);
+    }
+    assert.equal((await request('/api/jobs', { method: 'POST', body: JSON.stringify({ modelId: 'happyhorse-10-text-to-video', input: { prompt: 'test', duration: 30 } }) })).status, 400);
+    // Auto routing must skip HappyHorse and ignore a spoofed raw model name.
+    const payload = JSON.stringify({ generationType: 'video', input: { prompt: 'test blue backpack', duration: 30, model: 'happyhorse-1.0-t2v' } });
+    db.prepare("UPDATE users SET balance=1 WHERE email='admin@7c.local'").run();
     assert.equal((await request('/api/jobs', { method: 'POST', body: payload })).status, 402);
     assert.equal(calls.length, 0);
     db.prepare("UPDATE users SET balance=100 WHERE email='admin@7c.local'").run();
     const submitted = await request('/api/jobs', { method: 'POST', body: payload });
     assert.equal(submitted.status, 202);
     let job = await submitted.json();
-    assert.equal(job.remoteJob.quotedPointCost, 13);
+    assert.equal(job.remoteJob.quotedPointCost, 3.25);
+    assert.equal(job.remoteJob.kind, undefined);
+    assert.equal(job.input.modelId, model.id);
     const id = job.id;
     for (let i = 0; i < 250 && job.status !== 'succeeded'; i++) {
       await Promise.all(Array.from({ length: 3 }, () => request(`/api/jobs/${id}/refresh`)));
@@ -70,16 +77,17 @@ test('API long-video flow: balance check, concurrent refresh, full output, exact
       assert.notEqual(job.status, 'failed', job.error);
     }
     assert.equal(job.status, 'succeeded', serverLog);
-    assert.equal(calls.length, 4);
-    assert.ok(calls.every((call) => call.parameters.duration === 15));
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].parameters.duration, 30);
+    assert.equal(calls[0].model, 'wan3.0-video');
     for (let i = 0; i < 3; i++) await request(`/api/jobs/${id}/refresh`);
     await pause(100);
     assert.equal(db.prepare('SELECT count(*) AS n FROM wallet_transactions WHERE related_job_id=?').get(id).n, 1);
-    assert.equal(db.prepare("SELECT balance FROM users WHERE email='admin@7c.local'").get().balance, 87);
+    assert.equal(db.prepare("SELECT balance FROM users WHERE email='admin@7c.local'").get().balance, 96.75);
     const result = await request(job.outputs.video_url);
     assert.equal(result.status, 200);
     const { stdout } = await exec('ffprobe', ['-v', 'error', '-show_format', '-of', 'json', path.join(dir, 'data', 'outputs', path.basename(job.outputs.video_url))]);
-    assert.ok(Math.abs(Number(JSON.parse(stdout).format.duration) - 60) < 0.5);
+    assert.ok(Math.abs(Number(JSON.parse(stdout).format.duration) - 30) < 0.5);
   } finally {
     if (child && child.exitCode === null) { const exited = once(child, 'exit'); child.kill('SIGTERM'); await exited; }
     db?.close();
