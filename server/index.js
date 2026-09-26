@@ -15,6 +15,7 @@ import { validateVideoDuration, modelSupportsVideoDuration, videoPointCost } fro
 import { advanceLongVideo, composeLongVideo } from './long-video.js';
 import { createVideoPreviewService } from './video-preview.js';
 import { streamOutput } from './output-stream.js';
+import { listAssets } from './storage.js';
 
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST ?? '127.0.0.1';
@@ -1116,6 +1117,16 @@ async function route(request, response) {
     }
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/assets') {
+    const currentUser = requireLogin(request, response);
+    if (!currentUser) return;
+    const limit = Number(url.searchParams.get('limit') ?? 12);
+    const offset = Number(url.searchParams.get('offset') ?? 0);
+    const type = url.searchParams.get('type') ?? 'all';
+    if (!Number.isInteger(limit) || limit < 1 || limit > 24 || !Number.isSafeInteger(offset) || offset < 0 || !['all','image','video'].includes(type)) return sendJson(response, 400, { error: 'Invalid asset page' });
+    return sendJson(response, 200, await listAssets({ limit, offset, type, userId: currentUser.role === 'admin' ? undefined : currentUser.id }));
+  }
+
   if (request.method === 'GET' && url.pathname === '/api/jobs') {
     const currentUser = requireLogin(request, response);
     if (!currentUser) return;
@@ -1236,8 +1247,10 @@ async function route(request, response) {
     const job = await getJob(jobId, currentUser.role === 'admin' ? {} : { userId: currentUser.id });
     if (!job) return sendJson(response, 404, { error: 'Job not found' });
 
-    if (segments[4] === 'preview') {
-      const preview = await videoPreviews.ensure(job);
+    if (segments[4] === 'preview' || segments[4] === 'thumbnail') {
+      const index = segments[4] === 'thumbnail' ? Number(url.searchParams.get('index') ?? 0) : null;
+      if (index !== null && (!Number.isInteger(index) || index < 0)) return sendJson(response, 400, { error: 'Invalid image index' });
+      const preview = await videoPreviews.ensure(job, index);
       return sendJson(response, ['processing', 'deferred'].includes(preview.status) ? 202 : 200, preview);
     }
 

@@ -1149,6 +1149,29 @@ export function getDbJob(jobId, options = {}) {
   `).get(...params));
 }
 
+export function listDbAssets({ userId, type = 'all', limit = 12, offset = 0 } = {}) {
+  const conditions = ["jobs.status = 'succeeded'", "media.type = 'text'", "media.value <> ''"];
+  const params = [];
+  if (userId) { conditions.push('jobs.user_id = ?'); params.push(userId); }
+  const video = "media.value = json_extract(jobs.outputs_json, '$.video_url')";
+  if (type === 'video') conditions.push(video);
+  if (type === 'image') conditions.push(`NOT COALESCE((${video}), 0)`);
+  const rows = db.prepare(`
+    SELECT jobs.id AS jobId, media.value AS url, jobs.created_at AS createdAt,
+      CASE WHEN ${video} THEN 'video' ELSE 'image' END AS type,
+      MIN(CAST(media.key AS INTEGER)) AS imageIndex,
+      substr(COALESCE(json_extract(jobs.input_json, '$.prompt'), ''), 1, 500) AS prompt,
+      COALESCE(json_extract(jobs.input_json, '$.ratio'), '') AS ratio
+    FROM jobs JOIN json_each(json_insert(COALESCE(json_extract(jobs.outputs_json, '$.images'), '[]'),
+      '$[#]', json_extract(jobs.outputs_json, '$.image_url'), '$[#]', json_extract(jobs.outputs_json, '$.video_url'))) media
+    WHERE ${conditions.join(' AND ')}
+    GROUP BY jobs.id, media.value
+    ORDER BY jobs.created_at DESC, jobs.id DESC, media.value
+    LIMIT ? OFFSET ?
+  `).all(...params, limit + 1, offset);
+  return { assets: rows.slice(0, limit).map(row => ({ ...row, id: `${row.jobId}:${row.imageIndex}` })), hasMore: rows.length > limit, offset };
+}
+
 export function listDbJobs(options = {}) {
   const limit = Number(options.limit ?? 30);
   const params = [];

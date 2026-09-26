@@ -71,6 +71,26 @@ test('duplicates are coalesced, encoders serialized and failures do not retry on
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
+test('image cards receive a cached small JPEG, not the original image', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'aimv-image-thumb-'));
+  try {
+    const source = path.join(dir, 'image__image-0.png');
+    await exec('ffmpeg', ['-v','error','-f','lavfi','-i','testsrc2=s=1200x1800','-frames:v','1','-threads','1',source]);
+    const input = { id: 'image', status: 'succeeded', outputs: { images: ['/outputs/image__image-0.png'] } };
+    const service = createVideoPreviewService(dir);
+    let result;
+    for (let i = 0; i < 100; i++) { result = await service.ensure(input, 0); if (result.status !== 'processing') break; await pause(30); }
+    assert.equal(result.status, 'ready'); assert.equal(result.preview_url, undefined);
+    const thumb = path.join(dir, path.basename(result.poster_url));
+    const {stdout} = await exec('ffprobe', ['-v','error','-show_streams','-of','json',thumb]);
+    const stream = JSON.parse(stdout).streams[0];
+    assert.equal(stream.width, 320); assert.equal(stream.height, 480);
+    assert.ok((await stat(thumb)).size < (await stat(source)).size);
+    assert.equal((await service.ensure(input, 99)).status, 'unavailable');
+    assert.deepEqual(await createVideoPreviewService(dir, {thumbnail: () => assert.fail('Disk cache miss')}).ensure(input, 0), result);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
 test('rejects remote, missing, cross-job and traversal sources without invoking ffmpeg', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'aimv-preview-path-'));
   try {

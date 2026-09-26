@@ -43,6 +43,7 @@ const baseConfig: NextConfig = {
       { source: '/api/projects', destination: `${apiServer}/api/projects` },
       { source: '/api/projects/:path*', destination: `${apiServer}/api/projects/:path*` },
       { source: '/api/jobs', destination: `${apiServer}/api/jobs` },
+      { source: '/api/assets', destination: `${apiServer}/api/assets` },
       { source: '/api/jobs/:path*', destination: `${apiServer}/api/jobs/:path*` },
       { source: '/outputs/:path*', destination: `${apiServer}/outputs/:path*` },
       { source: '/uploads/:path*', destination: `${apiServer}/uploads/:path*` }

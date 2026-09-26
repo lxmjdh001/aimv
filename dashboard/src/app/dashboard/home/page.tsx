@@ -7,8 +7,10 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { apiRequest } from '@/lib/api-client';
-import { CreativeAsset, CreativeJob, CreativeProject, jobToAssets } from '@/lib/creative-types';
+import { CreativeAsset, CreativeProject } from '@/lib/creative-types';
 import { VideoPreview } from '@/features/assets/components/video-preview';
+import { useAssetPage } from '@/features/assets/api/queries';
+import { AssetPagination } from '@/features/assets/components/asset-pagination';
 import {
   generationModelCost,
   longVideoDescription,
@@ -38,11 +40,11 @@ const emptyInspirations = [
 export default function CreativeHomePage() {
   const router = useRouter();
   const referenceInputRef = useRef<HTMLInputElement>(null);
-  const [jobs, setJobs] = useState<CreativeJob[]>([]);
   const [models, setModels] = useState<GenerationModel[]>([]);
   const [prompt, setPrompt] = useState('');
   const [category, setCategory] = useState(categories[0]);
   const [tab, setTab] = useState<'inspiration' | 'image' | 'video'>('inspiration');
+  const gallery = useAssetPage(tab === 'inspiration' ? 'all' : tab);
   const [composerExpanded, setComposerExpanded] = useState(false);
   const [generationType, setGenerationType] = useState<GenerationType>('image');
   const [modelId, setModelId] = useState('auto');
@@ -55,12 +57,10 @@ export default function CreativeHomePage() {
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
-    apiRequest<CreativeJob[]>('/api/jobs?limit=80').then(setJobs).catch(() => setJobs([]));
     apiRequest<GenerationModel[]>('/api/models').then(setModels).catch(() => setModels([]));
   }, []);
 
-  const assets = useMemo(() => jobs.flatMap(jobToAssets), [jobs]);
-  const visibleAssets = tab === 'inspiration' ? assets : assets.filter((asset) => asset.type === tab);
+  const visibleAssets = gallery.data?.assets ?? [];
   const compatibleModels = useMemo(
     () => models.filter((model) => modelSupportsGeneration(model, generationType, Boolean(referenceUrl), Number(duration))),
     [generationType, models, referenceUrl, duration]
@@ -192,7 +192,8 @@ export default function CreativeHomePage() {
           </div>
         </section>
 
-        {visibleAssets.length ? <AssetMasonry assets={visibleAssets} /> : (
+        <p className='mb-3 text-xs text-muted-foreground'>轻量浏览 · 默认显示压缩封面，悬停预览视频，点击查看原素材</p>
+        {gallery.isLoading ? <p className='py-10 text-center text-muted-foreground'>素材加载中…</p> : gallery.isError ? <button onClick={() => gallery.refetch()} className='py-8 text-muted-foreground'>素材加载失败，点击重试</button> : visibleAssets.length ? <AssetMasonry assets={visibleAssets} /> : (
           <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4'>
             {emptyInspirations.map((item, index) => (
               <button key={item.title} onClick={() => setPrompt(`${item.title}，${item.subtitle}，商业广告质感`)} className='group overflow-hidden rounded-2xl border border-border bg-card text-left transition hover:-translate-y-1 hover:border-orange-500/50'>
@@ -208,11 +209,12 @@ export default function CreativeHomePage() {
             ))}
           </div>
         )}
+        <AssetPagination page={gallery.page} hasMore={gallery.data?.hasMore ?? false} loading={gallery.isFetching} onChange={gallery.setPage} />
       </div>
 
       <form
         onSubmit={startCreating}
-        className={`fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 flex-col border border-border bg-card/96 shadow-2xl shadow-black/60 backdrop-blur-xl transition-all duration-200 md:bottom-6 md:ml-32 ${composerExpanded
+        className={`fixed bottom-4 left-1/2 z-40 flex -translate-x-1/2 flex-col border border-border bg-card shadow-lg transition-[width,padding] duration-200 md:bottom-6 md:ml-32 ${composerExpanded
           ? 'w-[min(920px,calc(100vw-24px))] gap-3 rounded-3xl p-4 md:w-[min(920px,calc(100vw-312px))]'
           : 'w-[min(720px,calc(100vw-24px))] rounded-2xl p-2 md:w-[min(720px,calc(100vw-312px))]'
         }`}
@@ -308,29 +310,7 @@ function AssetMasonry({ assets }: { assets: CreativeAsset[] }) {
 }
 
 function AssetPreview({ asset }: { asset: CreativeAsset }) {
-  const [failed, setFailed] = useState(false);
-
-  if (failed) {
-    return (
-      <div className='flex aspect-[4/3] flex-col items-center justify-center gap-3 bg-[radial-gradient(circle_at_top,#412315_0%,#161617_72%)] text-zinc-500'>
-        {asset.type === 'video' ? <IconMovie className='size-8' /> : <IconPhoto className='size-8' />}
-        <span className='text-xs'>历史素材预览已过期</span>
-      </div>
-    );
-  }
-
-  return asset.type === 'video' ? (
-    <VideoPreview asset={asset} />
-  ) : (
-    <img
-      src={asset.url}
-      alt={asset.prompt || 'AI 生成素材'}
-      loading='lazy'
-      decoding='async'
-      onError={() => setFailed(true)}
-      className='block h-auto w-full bg-muted object-contain'
-    />
-  );
+  return <VideoPreview asset={asset} />;
 }
 
 function fileToDataUrl(file: File) {

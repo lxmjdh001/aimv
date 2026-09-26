@@ -106,6 +106,30 @@ test('API native 30s: model routing, duration validation, concurrent refresh, ex
     const otherCookie = otherLogin.headers.get('set-cookie').split(';')[0];
     assert.equal((await request(`/api/jobs/${id}/preview`, { headers: { Cookie: otherCookie } })).status, 404);
     assert.equal((await request(preview.preview_url, { headers: { Cookie: otherCookie } })).status, 404);
+    assert.equal((await fetch(base + '/api/assets')).status, 401);
+    const firstPage = await (await request('/api/assets')).json();
+    assert.equal(firstPage.assets.length, 1);
+    assert.equal(firstPage.assets[0].type, 'video');
+    assert.equal(firstPage.assets[0].remoteJob, undefined);
+    assert.equal(firstPage.assets[0].input, undefined);
+    const owner = db.prepare('SELECT user_id FROM jobs WHERE id=?').get(id).user_id;
+    for (let i = 0; i < 26; i++) {
+      const output = `/outputs/page-${i}__image-0.png`;
+      db.prepare('INSERT INTO jobs (id,user_id,provider_id,workflow_type,status,input_json,outputs_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)')
+        .run(`page-${i}`, owner, 'aliyun-bailian', 'textToImage', 'succeeded', JSON.stringify({prompt:'p'.repeat(2000)}), JSON.stringify({images:[output],image_url:output}), new Date().toISOString(), new Date().toISOString());
+    }
+    const page1 = await (await request('/api/assets?type=image&limit=12&offset=0')).json();
+    const page2 = await (await request('/api/assets?type=image&limit=12&offset=12')).json();
+    const page3 = await (await request('/api/assets?type=image&limit=12&offset=24')).json();
+    assert.equal(page1.assets.length, 12); assert.equal(page2.assets.length, 12); assert.equal(page3.assets.length, 2);
+    assert.equal(page1.hasMore, true); assert.equal(page3.hasMore, false);
+    assert.equal(new Set([...page1.assets,...page2.assets,...page3.assets].map(a=>a.id)).size, 26);
+    assert.ok(page1.assets.every(a=>a.type==='image' && a.prompt.length===500 && a.imageIndex===0));
+    assert.equal((await (await request('/api/assets?type=video')).json()).assets.length, 1);
+    assert.equal((await (await request('/api/assets', {headers:{Cookie:otherCookie}})).json()).assets.length, 0);
+    assert.equal((await request('/api/assets?limit=1000')).status, 400);
+    assert.equal((await request('/api/assets?offset=-1')).status, 400);
+    assert.equal((await request(`/api/jobs/${id}/thumbnail?index=-1`)).status, 400);
   } finally {
     if (child && child.exitCode === null) { const exited = once(child, 'exit'); child.kill('SIGTERM'); await exited; }
     db?.close();

@@ -51,6 +51,7 @@ export type CreativeJob = {
 };
 
 export type CreativeAsset = {
+  imageIndex?: number;
   id: string;
   jobId: string;
   type: 'image' | 'video';

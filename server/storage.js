@@ -1,6 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { listDbAssets } from './db.js';
 import { chargeDbJob, createDbCreativeProject, createDbJob, createDbUser, deleteDbCreativeProject, deleteDbPlatformConnection, getDbCreativeProject, getDbJob, getDbModel, getDbPlatformConnection, getDbPointSettings, getDbProvider, getDbUser, initDb, listDbCreativeProjects, listDbJobs, listDbModels, listDbProviders, listDbUsers, listDbWalletTransactions, rechargeDbUser, saveDbPointSettings, updateDbCreativeProject, updateDbJob, updateDbUser, upsertDbModel, upsertDbPlatformConnection, upsertProvider } from './db.js';
 
 const rootDir = process.cwd();
@@ -20,6 +21,8 @@ export async function ensureDataDirs() {
 export async function listProviders(options) {
   return listDbProviders(options);
 }
+
+export async function listAssets(options) { return listDbAssets(options); }
 
 export async function saveProviders(providers) {
   return providers.map((provider) => upsertProvider(provider));
