@@ -13,11 +13,14 @@ import { buildTikTokAuthorizationUrl, createTikTokPreReview, createTikTokPreview
 import { generateMetaPreview, getMetaConnectionStatus, serializeMetaError, validateMetaCreative } from './meta-business.js';
 import { validateVideoDuration, modelSupportsVideoDuration, videoPointCost } from './video-duration.js';
 import { advanceLongVideo, composeLongVideo } from './long-video.js';
+import { createVideoPreviewService } from './video-preview.js';
+import { streamOutput } from './output-stream.js';
 
 const port = Number(process.env.PORT ?? 3000);
 const host = process.env.HOST ?? '127.0.0.1';
 const publicDir = path.join(process.cwd(), 'public');
 const outputsDir = path.join(process.cwd(), 'data', 'outputs');
+const videoPreviews = createVideoPreviewService(outputsDir);
 const uploadsDir = path.join(process.cwd(), 'data', 'uploads');
 const adminPath = '/admin773441';
 const adminToken = '7c';
@@ -331,6 +334,7 @@ async function serveOutput(request, response) {
 
   const url = new URL(request.url, `http://${request.headers.host}`);
   const filename = decodeURIComponent(url.pathname.replace('/outputs/', ''));
+  if (!/^[\w.-]+$/.test(filename)) return sendJson(response, 403, { error: 'Forbidden' });
   const filePath = path.join(outputsDir, filename);
   if (!filePath.startsWith(outputsDir)) return sendJson(response, 403, { error: 'Forbidden' });
 
@@ -339,13 +343,7 @@ async function serveOutput(request, response) {
   const job = await getJob(jobId, currentUser.role === 'admin' ? {} : { userId: currentUser.id });
   if (!job) return sendJson(response, 404, { error: 'Output not found' });
 
-  try {
-    const file = await readFile(filePath);
-    response.writeHead(200, { 'Content-Type': contentTypeFor(filePath) });
-    response.end(file);
-  } catch {
-    sendJson(response, 404, { error: 'Output not found' });
-  }
+  return streamOutput(request, response, filePath, contentTypeFor(filePath));
 }
 
 async function serveUpload(request, response) {
@@ -1237,6 +1235,11 @@ async function route(request, response) {
     const jobId = decodeURIComponent(segments[3]);
     const job = await getJob(jobId, currentUser.role === 'admin' ? {} : { userId: currentUser.id });
     if (!job) return sendJson(response, 404, { error: 'Job not found' });
+
+    if (segments[4] === 'preview') {
+      const preview = await videoPreviews.ensure(job);
+      return sendJson(response, ['processing', 'deferred'].includes(preview.status) ? 202 : 200, preview);
+    }
 
     if (segments[4] === 'refresh') {
       if (job.remoteJob?.kind === 'segmented-video') {

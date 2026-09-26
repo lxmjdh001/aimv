@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { apiRequest } from '@/lib/api-client';
+import { VideoPreview } from '@/features/assets/components/video-preview';
 import { useEffect, useMemo, useState } from 'react';
 
 type Job = {
@@ -109,10 +110,10 @@ export default function AssetsPage() {
                 <div key={asset.id} className='overflow-hidden rounded-lg border border-border bg-background'>
                   <div className='flex aspect-[4/3] items-center justify-center bg-muted'>
                     {asset.type === 'video' ? (
-                      <video src={asset.url} controls className='h-full w-full object-contain' />
+                      <VideoPreview asset={asset} className='h-full' />
                     ) : (
                       <a href={asset.url} target='_blank' className='h-full w-full'>
-                        <img src={asset.url} alt='生成素材' className='h-full w-full object-contain' />
+                        <img src={asset.url} alt='生成素材' loading='lazy' decoding='async' className='h-full w-full object-contain' />
                       </a>
                     )}
                   </div>

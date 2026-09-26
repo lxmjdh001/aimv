@@ -52,7 +52,7 @@ test('API native 30s: model routing, duration validation, concurrent refresh, ex
     const login = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'admin@7c.local', password: '7cadmin123' }) });
     assert.equal(login.status, 200);
     const cookie = login.headers.get('set-cookie').split(';')[0];
-    const request = (route, options = {}) => fetch(base + route, { ...options, headers: { 'Content-Type': 'application/json', Cookie: cookie } });
+    const request = (route, options = {}) => fetch(base + route, { ...options, headers: { 'Content-Type': 'application/json', Cookie: cookie, ...options.headers } });
     for (const duration of [15, 20, 60]) {
       assert.equal((await request('/api/jobs', { method: 'POST', body: JSON.stringify({ generationType: 'video', input: { prompt: 'test', duration } }) })).status, 400);
     }
@@ -88,6 +88,24 @@ test('API native 30s: model routing, duration validation, concurrent refresh, ex
     assert.equal(result.status, 200);
     const { stdout } = await exec('ffprobe', ['-v', 'error', '-show_format', '-of', 'json', path.join(dir, 'data', 'outputs', path.basename(job.outputs.video_url))]);
     assert.ok(Math.abs(Number(JSON.parse(stdout).format.duration) - 30) < 0.5);
+    // Existing successful videos get on-demand, authenticated lightweight previews.
+    assert.equal((await fetch(`${base}/api/jobs/${id}/preview`)).status, 401);
+    let preview;
+    for (let i = 0; i < 100; i++) {
+      preview = await (await request(`/api/jobs/${id}/preview`)).json();
+      if (preview.status === 'ready') break;
+      await pause(50);
+    }
+    assert.equal(preview.status, 'ready');
+    assert.equal((await fetch(base + preview.preview_url)).status, 401);
+    const partial = await request(preview.preview_url, { headers: { Range: 'bytes=0-31' } });
+    assert.equal(partial.status, 206); assert.equal((await partial.arrayBuffer()).byteLength, 32);
+    assert.equal((await request(preview.poster_url)).status, 200);
+    await request('/api/admin/users', { method: 'POST', body: JSON.stringify({ email: 'other@test.local', password: 'password123', role: 'customer' }) });
+    const otherLogin = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'other@test.local', password: 'password123' }) });
+    const otherCookie = otherLogin.headers.get('set-cookie').split(';')[0];
+    assert.equal((await request(`/api/jobs/${id}/preview`, { headers: { Cookie: otherCookie } })).status, 404);
+    assert.equal((await request(preview.preview_url, { headers: { Cookie: otherCookie } })).status, 404);
   } finally {
     if (child && child.exitCode === null) { const exited = once(child, 'exit'); child.kill('SIGTERM'); await exited; }
     db?.close();

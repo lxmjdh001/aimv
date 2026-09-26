@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { apiRequest } from '@/lib/api-client';
 import { CreativeAsset, CreativeJob, CreativeProject, jobToAssets } from '@/lib/creative-types';
+import { VideoPreview } from '@/features/assets/components/video-preview';
 import {
   generationModelCost,
   longVideoDescription,
@@ -319,17 +320,13 @@ function AssetPreview({ asset }: { asset: CreativeAsset }) {
   }
 
   return asset.type === 'video' ? (
-    <video
-      src={asset.url}
-      controls
-      preload='metadata'
-      onError={() => setFailed(true)}
-      className='block h-auto w-full bg-black object-contain'
-    />
+    <VideoPreview asset={asset} />
   ) : (
     <img
       src={asset.url}
       alt={asset.prompt || 'AI 生成素材'}
+      loading='lazy'
+      decoding='async'
       onError={() => setFailed(true)}
       className='block h-auto w-full bg-muted object-contain'
     />

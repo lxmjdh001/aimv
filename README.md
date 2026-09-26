@@ -329,3 +329,12 @@ http://127.0.0.1:3006/auth/sign-in
 - 历史分段任务保留原提交报价和后台恢复处理能力；新任务不再创建分段任务。历史任务仍需 FFmpeg，后台每 15 秒推进。
 - 临时转码文件位于 `data/outputs/.video-compose-*`，正常完成或出错后自动清理；生成结果与分段视频保存在 `data/outputs/`。
 - 验证：`node --test server/long-video.test.js server/long-video-api.test.js`。测试使用模拟模型接口和 FFmpeg 测试片段，不消耗真实模型额度。
+
+### 素材列表轻量预览
+
+- 首页和素材库只对可见卡片加载最长 3 秒的静音循环 MP4：12 fps、最长边 384 像素、保留画面比例，并缓存 JPG 封面。点击卡片后才挂载完整视频播放器，下载仍是原文件。
+- 滚出可视区域或切换到后台标签页时卸载预览播放器；系统设置减少动态效果时只显示封面。图片也采用懒加载。
+- `GET /api/jobs/:id/preview` 复用任务归属权限，按需为已有和新生成视频补预览。只处理已保存到 `data/outputs/` 的本地文件，不重新下载历史远程链接。不可生成时保留点击播放原视频的入口。
+- 转码依赖 FFmpeg，后台串行处理、队列最多 32 项，不阻塞任务生成和列表请求。缓存文件以 `任务ID__preview-内容指纹` 命名；原文件变化时重建，失败冷却 15 分钟。缓存不修改任务和积分记录。
+- 原视频和预览接口支持 HTTP Range / HEAD、私有浏览器缓存及流式读取，避免每次请求把整段视频读进内存再返回。
+- 验证：`node --test server/video-preview.test.js server/long-video-api.test.js server/long-video.test.js`。
