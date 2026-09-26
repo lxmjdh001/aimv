@@ -21,10 +21,10 @@ export const generationRatioOptions = [
 export const videoDurationOptions = [
   { value: '5', label: '5 秒' },
   { value: '10', label: '10 秒' },
-  { value: '30', label: '30 秒 · 原生生成' }
+  { value: '30', label: '30 秒' }
 ];
 
-export const longVideoDescription = '30 秒使用万相 3.0 原生生成，不分段合成；需百炼账号已开通对应模型，按所选模型的单次积分价计费。';
+export const longVideoDescription = '30 秒使用万相 3.0，不分段合成；需百炼账号已开通对应模型，按所选模型的单次积分价计费。';
 
 export function modelSupportsGeneration(model: GenerationModel, generationType: GenerationType, hasReference = false, duration = 5) {
   if (generationType === 'image') return model.modality === 'image' && model.capability === 'text_to_image';
